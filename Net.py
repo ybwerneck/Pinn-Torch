@@ -12,13 +12,12 @@ class FullyConnectedNetwork(nn.Module):
         in_features = input_shape
         for hidden_size in hidden_sizes:
             self.layers.append(nn.Linear(in_features, hidden_size))
-            self.layers.append(nn.ReLU())  # Adding ReLU activation function
+            #self.layers.append(nn.ReLU())  # Adding ReLU activation function
             in_features = hidden_size
         self.layers.append(nn.Linear(in_features, output_shape))
 
     def forward(self, x):
         # Ensure x is a PyTorch tensor  
-        print(x)
         x=torch.Tensor(x)
         if not isinstance(x, torch.Tensor):
             raise TypeError("Input must be a PyTorch tensor")
@@ -29,6 +28,5 @@ class FullyConnectedNetwork(nn.Module):
 
         # Forward pass through all layers
         for layer in self.layers:
-            print(layer)
             x = layer(x)
         return x
