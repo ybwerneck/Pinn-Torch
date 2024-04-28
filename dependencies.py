@@ -10,3 +10,4 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import os
 import h5py
+import chaospy as cp
