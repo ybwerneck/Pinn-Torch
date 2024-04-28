@@ -4,42 +4,39 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from Net import FullyConnectedNetwork
+from Net import FullyConnectedNetworkMod
 from Trainer import Trainer
-from Trainer import Validator
-from Trainer import MSE
+from Validator import Validator
+from Loss import *
+
 # Check if GPU is availabls
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
-input_shape = 4  # Example input shape (28x28 image flattened)
-output_shape = 2   # Example output shape (10 classes)
-hidden_sizes = [6]  # Example hidden layer sizes
-model = FullyConnectedNetwork(input_shape, output_shape, hidden_sizes)
+
+input_shape = 4  
+output_shape = 2   
+hidden_layer = [(nn.Tanh,64), (nn.ReLU,32),(nn.ReLU,64),(nn.Tanh,32)]
+model = FullyConnectedNetworkMod(input_shape, output_shape, hidden_layer).to(device)
+
+
+
 print(model)
 
 data_folder="training_data/treino/"
-T = np.load(data_folder + "T.npy")
-K = np.load(data_folder + "K.npy")
-U = np.load(data_folder + "U.npy")
-V = np.load(data_folder + "V.npy")
-SOLs = np.load(data_folder + "SOLs.npy")
-SOLw = np.load(data_folder + "SOLw.npy")
 
 trainer=Trainer(model)
 
-data_in=torch.tensor(np.stack((T,K,V,U))).T
-data_out=torch.tensor(np.stack((U + K*T,V + K*T))).T
-
-loss=MSE(data_in,data_out)
-
-trainer.add_loss(loss)
-
-loss=MSE(data_in,data_out)
-
-trainer.add_loss(loss)
-trainer.add_validator(Validator(data_in,data_out,"val"))
 
 
-trainer.train(1000)
+
+trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=100)
+trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
+
+trainer.add_validator(Validator.fromDataSet("training_data/validation/",device=device))
+
+
+trainer.train(100000)
 
 print(model)

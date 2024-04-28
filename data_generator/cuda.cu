@@ -65,8 +65,8 @@ __global__ void fhn_kernel(float* ui, float* vi,float *ki, float* u_solution, fl
 
             // update FHN model equations for current cell
 
-            float u_new = u_i + DT * (iapp*(u_i*(u_i-0.4)*(1-u_i)-v_i ));
-            float v_new = v_i + DT * (0.2*(u_i*0.04-0.16*v_i));
+            float  u_new = u_i + DT * 10*((iapp + 1)*(u_i*(u_i-0.4)*(1-u_i))-v_i );
+            float v_new = v_i + DT * ((u_i*0.04-0.16*v_i));
 
             // store solution for current time step
             int ind = idx + NUM_CELLS * step;
