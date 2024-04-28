@@ -78,4 +78,4 @@ class LPthLoss(LOSS):
         self.p = p
 
     def loss(self, tgt, pred):
-        return torch.mean(torch.pow(torch.abs(tgt - pred), self.p))
+        return torch.sum(torch.mean(torch.pow(torch.abs(tgt - pred), self.p),axis=0))
