@@ -34,8 +34,8 @@ data_folder="training_data/treino/"
 
 
 
-trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=10)
-trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
+#trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=10)
+#trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
 
 
 ##LOSS_PINN
@@ -64,7 +64,7 @@ def FHN_LOSS(data_in, model):
 
 batch_gen=lambda size:default_batch_generator(size,[t_range,u_range,v_range,k_range])
 
-trainer.add_loss(LOSS_PINN(FHN_LOSS,batch_gen,batch_size=1024),weigth=10)
+#trainer.add_loss(LOSS_PINN(FHN_LOSS,batch_gen,batch_size=1024),weigth=10)
 
 
 
@@ -73,7 +73,7 @@ trainer.add_loss(LOSS_PINN(FHN_LOSS,batch_gen,batch_size=1024),weigth=10)
 def f(data_in, model):
         x,w = model(data_in).T 
         t,u,v,k=data_in.T          
-        return torch.abs(x-u) + torch.abs(w-v)
+        return torch.pow(torch.abs(x-u),2)
 
 
 batch_gen=lambda size:default_batch_generator(size,[(0,0),u_range,v_range,k_range])
