@@ -10,6 +10,7 @@ class Trainer:
         self.print_steps=print_steps
         self.output_folder=output_folder
         self.optimizer =  optim.Adam(model.parameters(), lr=1e-4)
+        self.scheduler = ReduceLROnPlateau(self.optimizer)
         try:
             os.mkdir(self.output_folder)
         except:
@@ -25,9 +26,11 @@ class Trainer:
         for it in range(num_iterations):
             self.model.zero_grad()
             total_loss = 0
+            losses=[]
             for weighth,loss_obj in zip(self.lossesW,self.losses):
                 loss = loss_obj.forward(self.model)
                 total_loss += loss*weighth
+                losses.append((loss*weighth).item())
 
             # Backward pass
             self.optimizer.zero_grad()  # Reset gradients
@@ -36,11 +39,14 @@ class Trainer:
 
             # Update weights
             self.optimizer.step()
-
+            self.scheduler.step(total_loss)
             if it % self.print_steps == 0:
-                print("Iteration ", it, ": total loss ", total_loss.item())
+                print("Iteration ", it, ": total loss ", total_loss.item(),losses)
+                
+                
             if it % self.val_steps ==0:
                 for val_obj in self.validators:
                     val_obj.val(self.model)
+                    
  
 

@@ -11,3 +11,4 @@ import matplotlib.pyplot as plt
 import os
 import h5py
 import chaospy as cp
+from torch.optim.lr_scheduler import ReduceLROnPlateau
