@@ -8,7 +8,7 @@ from Net import FullyConnectedNetworkMod
 from Trainer import Trainer
 from Validator import Validator
 from Loss import *
-
+from Loss_PINN import *
 # Check if GPU is availabls
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -31,8 +31,9 @@ trainer=Trainer(model)
 
 
 
-trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=100)
+trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=10000)
 trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
+trainer.add_loss(LOSS_PINN())
 
 trainer.add_validator(Validator.fromDataSet("training_data/validation/",device=device))
 
