@@ -19,16 +19,6 @@ class FullyConnectedNetwork(nn.Module):
         self.layers.append(nn.Linear(in_features, output_shape))
 
     def forward(self, x):
-        # Ensure x is a PyTorch tensor  
-        x=torch.Tensor(x)
-        if not isinstance(x, torch.Tensor):
-            raise TypeError("Input must be a PyTorch tensor")
-
-        # Flatten the input if it's not already flattened
-        if x.dim() != 2:
-            raise ValueError("Input tensor must be 2-dimensional")
-
-        # Forward pass through all layers
         for layer in self.layers:
             x = layer(x)
         return x

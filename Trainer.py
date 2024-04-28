@@ -9,7 +9,7 @@ class Trainer:
         self.val_steps=val_steps
         self.print_steps=print_steps
         self.output_folder=output_folder
-        self.optimizer =  optim.Adam(model.parameters(), lr=1e-3)
+        self.optimizer =  optim.Adam(model.parameters(), lr=1e-4)
         try:
             os.mkdir(self.output_folder)
         except:
@@ -23,7 +23,7 @@ class Trainer:
         self.validators.append(val_obj)
     def train(self,num_iterations):
         for it in range(num_iterations):
-
+            self.model.zero_grad()
             total_loss = 0
             for weighth,loss_obj in zip(self.lossesW,self.losses):
                 loss = loss_obj.forward(self.model)

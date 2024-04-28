@@ -12,15 +12,15 @@ print(device)
 
 
 ##Model Parameters
-u_range=(-.1,.81)
-v_range=(0,.12)
-k_range=(0,1)
-t_range=(0,50)
+k_range = (0., 1)
+v_range = (0., 0.12)
+u_range = (-.1, 0.81)
+t_range=(0,20)
 
 ##Model Arch
 input_shape = 4  
 output_shape = 2   
-hidden_layer = [(nn.Tanh,64), (nn.ReLU,32),(nn.ReLU,64),(nn.Tanh,32)]
+hidden_layer = [(nn.ELU,64),(nn.Tanh,64),(nn.Tanh,64)]
 model = FullyConnectedNetworkMod(input_shape, output_shape, hidden_layer).to(device)
 trainer=Trainer(model)
 
@@ -34,8 +34,8 @@ data_folder="training_data/treino/"
 
 
 
-#trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=10)
-#trainer.add_loss(LOSS.fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
+trainer.add_loss(FHN_loos_fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=10)
+trainer.add_loss(FHN_loos_fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
 
 
 ##LOSS_PINN
@@ -73,15 +73,15 @@ batch_gen=lambda size:default_batch_generator(size,[t_range,u_range,v_range,k_ra
 def f(data_in, model):
         x,w = model(data_in).T 
         t,u,v,k=data_in.T          
-        return torch.pow(torch.abs(x-u),2)
+        return torch.pow(torch.abs(x-u),2) 
 
 
 batch_gen=lambda size:default_batch_generator(size,[(0,0),u_range,v_range,k_range])
-trainer.add_loss(LOSS_PINN(f,batch_gen),weigth=1000)
+trainer.add_loss(LOSS_PINN(f,batch_gen,batch_size=1024),weigth=1)
 
 
 ##Validator
-trainer.add_validator(Validator.fromDataSet("training_data/validation/",device=device))
+trainer.add_validator(FHN_VAL_fromDataSet("training_data/validation/",device=device))
 
 
 
@@ -93,6 +93,6 @@ trainer.add_validator(Validator.fromDataSet("training_data/validation/",device=d
 
 
 
-trainer.train(100000)
+trainer.train(1000000)
 
 print(model)

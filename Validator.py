@@ -1,18 +1,6 @@
 from dependencies import *
 class Validator():
-    @staticmethod
-    def fromDataSet(folder,name="Val",device=torch.device("cpu")):
-        data_folder=folder
-        T = np.load(data_folder + "T.npy")
-        K = np.load(data_folder + "K.npy")
-        U = np.load(data_folder + "U.npy")
-        V = np.load(data_folder + "V.npy")
-        SOLs = np.load(data_folder + "SOLs.npy")
-        SOLw = np.load(data_folder + "SOLw.npy")
-        data_in=torch.tensor(np.stack((T,K,V,U)),dtype=torch.float32).T.to(device)
-        data_out=torch.tensor(np.stack((SOLs,SOLw)),dtype=torch.float32).T.to(device)
-        return Validator(data_in,data_out,name)
-    
+   
     def __init__(self,data_intarget,target,name="val"):
         self.data_in=data_intarget
         self.target=target

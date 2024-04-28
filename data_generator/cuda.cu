@@ -226,10 +226,10 @@ printMemoryUsage();
 
     
     for (int i = 0; i < NUM_CELLS; i++) {
-        fprintf(u_fp, "%f", u_host[0 * NUM_CELLS+  i]);
-        fprintf(v_fp, "%f", v_host[0 * NUM_CELLS + i]);
+        fprintf(u_fp, "%f", u_host[0 * NUM_CELLS]);
+        fprintf(v_fp, "%f", v_host[0 * NUM_CELLS ]);
 
-        for (int j = 1; j < N; j++) {
+        for (int j = 0; j < N; j++) {
             int ind = j * NUM_CELLS + i;
             // update FHN model equations for current cell
             float U = u_solution[ind];
@@ -246,7 +246,7 @@ printMemoryUsage();
     fclose(v_fp);
     fprintf(t_fp, "%f", 0*DT*rate);
 
-    for (int i = 1; i < N; i++) {
+    for (int i = 0; i < N; i++) {
         fprintf(t_fp, ", %f ", (DT * rate)*i);
     }
 
