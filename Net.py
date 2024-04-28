@@ -1,5 +1,4 @@
-import torch
-import torch.nn as nn
+from dependencies import *
 
 class FullyConnectedNetwork(nn.Module):
     def __init__(self, input_shape, output_shape,hidden_sizes=0):

@@ -1,13 +1,4 @@
-import torch.optim as optim
-import torch
-
-import torch.nn as nn
-import numpy as np
-import os
-
-
-        
-import os
+from dependencies import *
 
 class Trainer:
     def __init__(self, model,val_steps=1000,print_steps=100,output_folder="trainer/"):

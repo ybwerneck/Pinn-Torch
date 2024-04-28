@@ -1,6 +1,4 @@
-import numpy as np
-import torch
-import h5py
+from dependencies import *
 class Validator():
     @staticmethod
     def fromDataSet(folder,name="Val",device=torch.device("cpu")):

@@ -1,7 +1,4 @@
-import torch
-import numpy as np
-import torch.nn.functional as F
-import random
+from dependencies import *
 #Loss base class
 class LOSS(torch.nn.Module):
     
