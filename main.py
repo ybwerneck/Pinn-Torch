@@ -20,7 +20,7 @@ t_range=(0,20)
 ##Model Arch
 input_shape = 4  
 output_shape = 2   
-hidden_layer = [(nn.ELU,64),(nn.Tanh,64),(nn.Tanh,64)]
+hidden_layer = [(nn.Tanh,128),(nn.Tanh,128),(nn.Tanh,128),(nn.Tanh,128)]
 model = FullyConnectedNetworkMod(input_shape, output_shape, hidden_layer).to(device)
 trainer=Trainer(model)
 
@@ -34,7 +34,7 @@ data_folder="training_data/treino/"
 
 
 
-trainer.add_loss(FHN_loos_fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=10)
+trainer.add_loss(FHN_loos_fromDataSet(data_folder,1024,device=device,loss_type="L4"),weigth=1)
 trainer.add_loss(FHN_loos_fromDataSet(data_folder,1024,device=device,loss_type="L2"),weigth=1)
 
 

@@ -44,7 +44,7 @@ class FHNCUDA:
     @staticmethod
     def callCppmodel(T,dt,rate):  
      #   print("Calling solver")
-        name="a.exe"
+        name="./a.out"
         args=name + " " + str(T) + " "+ str(dt)  + " " +str(rate)    
         
         print("kernel call:",args)

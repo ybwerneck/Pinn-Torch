@@ -44,7 +44,7 @@ def FHN_loos_fromDataSet(folder, batch_size=10000, device=torch.device("cpu"), l
         V = np.load(data_folder + "V.npy")
         SOLs = np.load(data_folder + "SOLs.npy")
         SOLw = np.load(data_folder + "SOLw.npy")
-        data_in=torch.tensor(np.stack((T,K,V,U)),dtype=torch.float32).T.to(device)
+        data_in=torch.tensor(np.stack((T,U,V,K)),dtype=torch.float32).T.to(device)
         data_out=torch.tensor(np.stack((SOLs,SOLw)),dtype=torch.float32).T.to(device)
         
         if loss_type == "MSE":
