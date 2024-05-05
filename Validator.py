@@ -44,4 +44,5 @@ class Validator():
             hf.create_dataset("target", data=self.target.detach().cpu().numpy())
             hf.create_dataset("pred", data=p.detach().cpu().numpy())
             hf.create_dataset("input", data=self.data_in.detach().cpu().numpy())
+        return np.max(e)
 
