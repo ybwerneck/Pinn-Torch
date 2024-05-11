@@ -1,4 +1,4 @@
-from dependencies import *
+from .dependencies import *
 
 #Loss base class
 class LOSS_PINN(torch.nn.Module):

@@ -1,8 +1,8 @@
-from dependencies import *
+from .dependencies import *
 #Loss base class
 class LOSS(torch.nn.Module):
     
-    def __init__(self,data_in,target,batch_size=10000,shuffle=False):
+    def __init__(self,data_in,target,batch_size=10000,shuffle=False,dtype=torch.float32):
         
         if shuffle:
             combined = torch.cat((data_in, target), dim=1).to("cpu")
@@ -78,4 +78,4 @@ class LPthLoss(LOSS):
         self.p = p
 
     def loss(self, tgt, pred):
-        return torch.mean(torch.pow(torch.sum(torch.pow(torch.abs(tgt - pred), self.p),axis=0),1/self.p))
+        return torch.mean(torch.pow(torch.sum(torch.pow(torch.abs(tgt - pred), self.p),axis=1),1/self.p))

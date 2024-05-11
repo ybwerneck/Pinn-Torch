@@ -1,5 +1,7 @@
-
+from .dependencies import *
 class Trainer:
+
+
     def __init__(self, model,val_steps=1000,print_steps=100,output_folder="trainer/"):
         self.model = model
         self.losses = []
@@ -9,7 +11,7 @@ class Trainer:
         self.print_steps=print_steps
         self.output_folder=output_folder
         self.optimizer =  optim.Adam(model.parameters(), lr=1e-2)
-        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, threshold=0.00001, threshold_mode='rel', cooldown=0, min_lr=0.00001, eps=1e-08)
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.99, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-3, eps=1e-08)
         try:
             os.mkdir(self.output_folder)
         except:
@@ -22,6 +24,7 @@ class Trainer:
         val_obj.setFolder(self.output_folder)
         self.validators.append(val_obj)
     def train(self,num_iterations):
+        best_val=1e5
         for it in range(num_iterations):
             self.model.zero_grad()
             total_loss = 0
@@ -46,6 +49,10 @@ class Trainer:
             if it % self.val_steps ==0:
                 for val_obj in self.validators:
                     vloss=val_obj.val(self.model)
+                    if(vloss<best_val):
+                        torch.save(self.model,self.output_folder+"model")
+                        best_val=loss
+                    print("Val loss ",vloss)
                     self.scheduler.step(vloss)
 
                     
