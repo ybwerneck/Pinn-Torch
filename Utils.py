@@ -2,12 +2,12 @@ from .dependencies import *
 from .Loss import *
 from .Validator import *
 
-def default_batch_generator(size, ranges):
+def default_batch_generator(size, ranges,device):
     batch = torch.empty((len(ranges),size)).uniform_(0, 1).T  # Initialize with random values within [-1, 1]
     
     for i, (min_val, max_val) in enumerate(ranges):
         batch[:, i] = batch[:, i] * (max_val - min_val) + (min_val)
-    return batch.requires_grad_().to(torch.device("cuda"))
+    return batch.requires_grad_().to(device)
 
 def cp_batch_generator(size, ranges):
     distribution = []
@@ -32,9 +32,13 @@ def FHN_VAL_fromDataSet(folder,name="Val",device=torch.device("cpu"),dtype=torch
         V = np.load(data_folder + "V.npy")
         SOLs = np.load(data_folder + "SOLs.npy")
         SOLw = np.load(data_folder + "SOLw.npy")
+        print(np.shape(T))
+        print(np.shape(U))
+        print(np.shape(T))
+        print(np.shape(K))
         data_in=torch.tensor(np.stack((T,U,V,K)),dtype=dtype).T.to(device)
         data_out=torch.tensor(np.stack((SOLs,SOLw)),dtype=dtype).T.to(device)
-        return Validator(data_in,data_out,name)
+        return Validator(data_in,data_out,name,device)
 
 def FHN_loos_fromDataSet(folder, batch_size=10000, device=torch.device("cpu"), loss_type="MSE",shuffle=True,dtype=torch.float64):
         data_folder = folder
@@ -60,7 +64,7 @@ def FHN_loos_fromDataSet(folder, batch_size=10000, device=torch.device("cpu"), l
         elif loss_type.startswith("L"):
             try:
                 p = int(loss_type[1:])
-                return LPthLoss(data_in, data_out, batch_size,shuffle=shuffle, p=p)
+                return LPthLoss(data_in, data_out, batch_size,shuffle=shuffle,device=device, p=p)
             except ValueError:
                 raise ValueError(f"Invalid value for p in L-pth loss: {loss_type}")
    

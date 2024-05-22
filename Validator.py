@@ -1,18 +1,18 @@
 from .dependencies import *
 class Validator():
    
-    def __init__(self,data_intarget,target,name="val"):
+    def __init__(self,data_intarget,target,name="val",device=torch.device("cuda")):
         self.data_in=data_intarget.to("cpu")
+        self.device=device
         self.target=target.to("cpu")
         self.name=name
  
     def setFolder(self,folder):
         self.folder=folder
         h5py.File(f"{self.folder}/{self.name}_err.h5", 'w')
-                  
-    def val(self, model):
+    
+    def val(self, model,p=False):
         # Evaluate the model
-      
         
         batch_size = 10*2048  # Choose an appropriate batch size
         num_samples = len(self.data_in)
@@ -34,7 +34,7 @@ class Validator():
                 batch_target = self.target[start_idx:end_idx]
 
                 # Evaluate the model on the current batch
-                cudad=batch_data.to("cuda")
+                cudad=batch_data.to(self.device)
                 data_out[start_idx:end_idx]= model(cudad).to("cpu")
                     # Clear GPU memory
                 del batch_data
@@ -69,11 +69,10 @@ class Validator():
                 # Create a new dataset if it doesn't exist
                 hf.create_dataset("error_stats", data=new_data)
 
-            
-        with h5py.File(f"{self.folder}/{self.name}.h5", 'w') as hf:
-            #hf.create_dataset("error_stats", data=[np.mean(e), np.max(e)])
-            hf.create_dataset("target", data=self.target.detach().cpu().numpy())
-            hf.create_dataset("pred", data=data_out.detach().cpu().numpy())
-            hf.create_dataset("input", data=self.data_in.detach().cpu().numpy())
+        if(p):
+            with h5py.File(f"{self.folder}/{self.name}.h5", 'w') as hf:
+                hf.create_dataset("target", data=self.target.detach().cpu().numpy())
+                hf.create_dataset("pred", data=data_out.detach().cpu().numpy())
+                hf.create_dataset("input", data=self.data_in.detach().cpu().numpy())
         return max_error
 

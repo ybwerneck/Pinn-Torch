@@ -2,15 +2,17 @@ from .dependencies import *
 #Loss base class
 class LOSS(torch.nn.Module):
     
-    def __init__(self,data_in,target,batch_size=10000,shuffle=False,dtype=torch.float32):
+    def __init__(self,data_in,target,batch_size=10000,shuffle=False,dtype=torch.float32,device=-1):
+        
         
         if shuffle:
-            combined = torch.cat((data_in, target), dim=1).to("cpu")
+            datac,tc=data_in.to("cpu"),target.to("cpu")
+            combined = torch.cat((datac, tc), dim=1)
             combined = combined[torch.randperm(combined.size(0))]
-            data_in, target = torch.split(combined.to("cuda"), [4, 2], dim=1)
-
-        self.data_in=data_in
-        self.target=target
+            data_in, target = torch.split(combined, [4, 2], dim=1)
+        self.device=device
+        self.data_in=data_in.to(device )
+        self.target=target.to(device)
         self.batch_size=batch_size
         self.i=0
         self.len_d=len(target)
@@ -23,12 +25,11 @@ class LOSS(torch.nn.Module):
         tgt=self.target[self.i:self.i+self.batch_size]
         self.i+=self.batch_size
 
-        return batch,tgt
+        return batch.to(self.device),tgt.to(self.device)
     
     def forward(self,model):
         batch,tgt= self.getBatch()
         pred= model(batch)
-        
         if(self.i>self.len_d):
             self.i=0
         return self.loss(tgt,pred)
@@ -73,8 +74,8 @@ class CosineSimilarityLoss(LOSS):
 
 
 class LPthLoss(LOSS):
-    def __init__(self, data_in, target, batch_size=10000, p=2, shuffle=False):
-        super(LPthLoss, self).__init__(data_in, target, batch_size, shuffle)
+    def __init__(self, data_in, target, batch_size=10000, p=2, shuffle=False, device=torch.device("cpu")):
+        super(LPthLoss, self).__init__(data_in, target, batch_size, shuffle,device=device)
         self.p = p
 
     def loss(self, tgt, pred):

@@ -4,19 +4,19 @@ from .dependencies import *
 class LOSS_PINN(torch.nn.Module):
   
 
-    def __init__(self,Pinn_func,batch_generator,batch_size=10000,shuffle=False):
+    def __init__(self,Pinn_func,batch_generator,batch_size=10000,shuffle=False,device=torch.device("cuda")):
         self.f=Pinn_func
         self.batch_generator=batch_generator
 
         self.batch_size=batch_size
         self.shuffle=shuffle
         
-        
+        self.device=device
         super(LOSS_PINN, self).__init__()
 
 
     def getBatch(self):
-        batch=self.batch_generator(self.batch_size)
+        batch=self.batch_generator(self.batch_size,self.device)
 
         return batch
     

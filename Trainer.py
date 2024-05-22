@@ -2,7 +2,7 @@ from .dependencies import *
 class Trainer:
 
 
-    def __init__(self, model,val_steps=1000,print_steps=100,output_folder="trainer/"):
+    def __init__(self, model,val_steps=5000,print_steps=5000,output_folder="trainer/"):
         self.model = model
         self.losses = []
         self.lossesW=[]
@@ -50,10 +50,14 @@ class Trainer:
                 for val_obj in self.validators:
                     vloss=val_obj.val(self.model)
                     if(vloss<best_val):
-                        torch.save(self.model,self.output_folder+"model")
+                        torch.save(self.model,self.output_folder+"/model")
                         best_val=loss
                     print("Val loss ",vloss)
                     self.scheduler.step(vloss)
+        
+        for val_obj in self.validators:
+            vloss=val_obj.val(self.model,True)
+            
 
                     
  
