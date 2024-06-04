@@ -1,5 +1,27 @@
 from .dependencies import *
+import csv
 class Trainer:
+
+    def writeLosses(self, losses,it):
+        # Writing each loss to a CSV file
+        file_exists = os.path.isfile(self.output_folder+'/slosses.csv')
+
+        with open(self.output_folder+'/losses.csv', 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+        
+        # Write the header if the file does not exist
+            if not file_exists:
+                los=[]
+                los.append("Iter")
+                for loss in self.losses:
+                    los.append(loss.name)
+                writer.writerow(los)
+            los=[]
+            los.append(it)
+            for loss in losses:
+                los.append(loss)
+            writer.writerow(los)
+
 
 
     def __init__(self, model,val_steps=5000,print_steps=5000,output_folder="trainer/"):
@@ -44,8 +66,8 @@ class Trainer:
            
             if it % self.print_steps == 0:
               print("Iteration {}: total loss {:.4f}, losses: {}, learning rate: {:.10f}".format(it, total_loss.item(), losses, self.scheduler.get_last_lr()[0]))
-                
-                
+              self.writeLosses(losses,it)              
+    
             if it % self.val_steps ==0:
                 for val_obj in self.validators:
                     vloss=val_obj.val(self.model)

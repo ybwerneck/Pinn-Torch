@@ -1,15 +1,31 @@
 from .dependencies import *
 #Loss base class
+def ensure_at_least_one_column(x):
+    # If x is 1-dimensional, reshape to (len(x), 1)
+    if x.ndim == 1:
+        return x.reshape(-1, 1)
+    # If x is already 2-dimensional, return it unchanged
+    elif x.ndim == 2:
+        return x
+    else:
+        raise ValueError("Input array must be 1D or 2D")
+    
+
 class LOSS(torch.nn.Module):
     
-    def __init__(self,data_in,target,batch_size=10000,shuffle=False,dtype=torch.float32,device=-1):
-        
+    def __init__(self,data_in,target,batch_size=10000,shuffle=False,dtype=torch.float32,device=-1,name="Loss"):
+        self.name=name
         
         if shuffle:
-            datac,tc=data_in.to("cpu"),target.to("cpu")
+            datac,tc=ensure_at_least_one_column(data_in.to("cpu")),ensure_at_least_one_column(target.to("cpu"))
+            
             combined = torch.cat((datac, tc), dim=1)
             combined = combined[torch.randperm(combined.size(0))]
-            data_in, target = torch.split(combined, [4, 2], dim=1)
+            
+       
+            data_in, target = torch.split(combined, [len(datac.T), len(tc.T)], dim=1)
+     
+
         self.device=device
         self.data_in=data_in.to(device )
         self.target=target.to(device)
@@ -74,8 +90,8 @@ class CosineSimilarityLoss(LOSS):
 
 
 class LPthLoss(LOSS):
-    def __init__(self, data_in, target, batch_size=10000, p=2, shuffle=False, device=torch.device("cpu")):
-        super(LPthLoss, self).__init__(data_in, target, batch_size, shuffle,device=device)
+    def __init__(self, data_in, target, batch_size=10000, p=2, shuffle=False, device=torch.device("cpu"),name="LPthLoss"):
+        super(LPthLoss, self).__init__(data_in, target, batch_size, shuffle,device=device,name=name)
         self.p = p
 
     def loss(self, tgt, pred):

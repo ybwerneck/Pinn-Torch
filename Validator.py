@@ -1,8 +1,19 @@
 from .dependencies import *
+def ensure_at_least_one_column(x):
+    # If x is 1-dimensional, reshape to (len(x), 1)
+    if x.ndim == 1:
+        return x.reshape(-1, 1)
+    # If x is already 2-dimensional, return it unchanged
+    elif x.ndim == 2:
+        return x
+    else:
+        raise ValueError("Input array must be 1D or 2D")
+    
 class Validator():
    
     def __init__(self,data_intarget,target,name="val",device=torch.device("cuda")):
         self.data_in=data_intarget.to("cpu")
+        print(self.data_in)
         self.device=device
         self.target=target.to("cpu")
         self.name=name
@@ -14,7 +25,7 @@ class Validator():
     def val(self, model,p=False):
         # Evaluate the model
         
-        batch_size = 10*2048  # Choose an appropriate batch size
+        batch_size = 100*2048  # Choose an appropriate batch size
         num_samples = len(self.data_in)
         num_batches = (num_samples + batch_size - 1) // batch_size
 
@@ -34,7 +45,9 @@ class Validator():
                 batch_target = self.target[start_idx:end_idx]
 
                 # Evaluate the model on the current batch
-                cudad=batch_data.to(self.device)
+                cudad=ensure_at_least_one_column(batch_data.to(self.device))
+                #print(np.shape(cudad))
+
                 data_out[start_idx:end_idx]= model(cudad).to("cpu")
                     # Clear GPU memory
                 del batch_data

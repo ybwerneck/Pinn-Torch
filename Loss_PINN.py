@@ -4,10 +4,10 @@ from .dependencies import *
 class LOSS_PINN(torch.nn.Module):
   
 
-    def __init__(self,Pinn_func,batch_generator,batch_size=10000,shuffle=False,device=torch.device("cuda")):
+    def __init__(self,Pinn_func,batch_generator,batch_size=10000,shuffle=False,device=torch.device("cuda"),name="LossPinn"):
         self.f=Pinn_func
         self.batch_generator=batch_generator
-
+        self.name=name
         self.batch_size=batch_size
         self.shuffle=shuffle
         
@@ -24,7 +24,7 @@ class LOSS_PINN(torch.nn.Module):
         batch  = self.getBatch()
   
 
-        return torch.mean((self.f(batch,model))) +torch.max((self.f(batch,model))) 
+        return torch.mean((self.f(batch,model)))
     
     
     def loss(self,tgt,pred):
