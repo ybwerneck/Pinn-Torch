@@ -10,7 +10,7 @@ class Trainer:
             writer = csv.writer(csvfile)
         
         # Write the header if the file does not exist
-            if not file_exists:
+            if it==0:
                 los=[]
                 los.append("Iter")
                 for loss in self.losses:
@@ -30,9 +30,10 @@ class Trainer:
         self.lossesW=[]
         self.validators=[]
         self.val_steps=val_steps
+        clear_folder(output_folder)
         self.print_steps=print_steps
         self.output_folder=output_folder
-        self.optimizer =  optim.Adam(model.parameters(), lr=1e-2)
+        self.optimizer =  optim.Adam(model.parameters(), lr=1e-4)
         self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.99, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-3, eps=1e-08)
         try:
             os.mkdir(self.output_folder)
