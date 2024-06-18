@@ -11,8 +11,9 @@ import os
 import h5py
 import chaospy as cp
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-
+import time
 import shutil
+import subprocess
 
 def clear_folder(folder_path):
     # Check if the folder exists

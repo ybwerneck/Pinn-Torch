@@ -40,14 +40,17 @@ class LOSS(torch.nn.Module):
         batch=self.data_in[self.i:self.i+self.batch_size]
         tgt=self.target[self.i:self.i+self.batch_size]
         self.i+=self.batch_size
+        if(self.i+self.batch_size>len(self.data_in)):
+            self.i=0
 
         return batch.to(self.device),tgt.to(self.device)
     
     def forward(self,model):
-        batch,tgt= self.getBatch()
+        batch,tgt=self.getBatch()
         pred= model(batch)
         if(self.i>self.len_d):
             self.i=0
+
         return self.loss(tgt,pred)
     
     def loss(self,tgt,pred):
@@ -95,4 +98,4 @@ class LPthLoss(LOSS):
         self.p = p
 
     def loss(self, tgt, pred):
-        return torch.mean(torch.pow(torch.sum(torch.pow(torch.abs(tgt - pred), self.p),axis=1),1/self.p))
+        return torch.mean(torch.pow(torch.sum(torch.pow(torch.abs(tgt - pred), self.p), axis=1), 1/self.p))

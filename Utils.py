@@ -2,6 +2,7 @@ from .dependencies import *
 from .Loss import *
 from .Validator import *
 
+
 def default_batch_generator(size, ranges,device):
     batch = torch.empty((len(ranges),size)).uniform_(0, 1).T  # Initialize with random values within [-1, 1]
     
@@ -24,33 +25,30 @@ def cp_batch_generator(size, ranges):
     batch = torch.tensor(samples).T  # Transpose to match the shape of the output
     return batch.requires_grad_().to(torch.device("cuda"))
 
-def FHN_VAL_fromDataSet(folder,name="Val",device=torch.device("cpu"),dtype=torch.float64):
+def LoadDataSet(folder,data_in=["T.npy","U.npy","V.npy"],data_out=["SOLs.npy","SOLw.npy"],device=torch.device("cpu"),dtype=torch.float64):
         data_folder=folder
-        T = np.load(data_folder + "T.npy")
-        K = np.load(data_folder + "K.npy")
-        U = np.load(data_folder + "U.npy")
-        V = np.load(data_folder + "V.npy")
-        SOLs = np.load(data_folder + "SOLs.npy")
-        SOLw = np.load(data_folder + "SOLw.npy")
-        print(np.shape(T))
-        print(np.shape(U))
-        print(np.shape(T))
-        print(np.shape(K))
-        data_in=torch.tensor(np.stack((T)),dtype=dtype).T.to(device)
-        data_out=torch.tensor(np.stack((SOLs,SOLw)),dtype=dtype).T.to(device)
-        return Validator(data_in,data_out,name,device)
+        ind=[]
+        outd=[]
 
-def FHN_loos_fromDataSet(folder, batch_size=10000, device=torch.device("cpu"), loss_type="MSE",shuffle=True,dtype=torch.float64):
-        data_folder = folder
-        T = np.load(data_folder + "T.npy")
-        K = np.load(data_folder + "K.npy")
-        U = np.load(data_folder + "U.npy")
-        V = np.load(data_folder + "V.npy")
-        SOLs = np.load(data_folder + "SOLs.npy")
-        SOLw = np.load(data_folder + "SOLw.npy")
-        data_in=torch.tensor(np.stack((T)),dtype=dtype).T.to(device)
-        data_out=torch.tensor(np.stack((SOLs,SOLw)),dtype=dtype).T.to(device)
-        
+        for file in data_in:
+             ind.append(np.load(data_folder+file))    
+
+             #print(f'READ {file}, with shape {np.shape(ind[-1])}')
+        for file in data_out:
+             outd.append(np.load(data_folder+file))    
+             #print(f'READ {file}, with shape {np.shape(outd[-1])}')
+
+            
+
+        data_in=torch.tensor(np.stack(ind),dtype=dtype).T.to(device)
+        data_out=torch.tensor(np.stack(outd),dtype=dtype).T.to(device)
+
+
+        return data_in,data_out
+
+def FHN_loos_fromDataSet(data_in,data_out, batch_size=10000, device=torch.device("cpu"), loss_type="MSE",shuffle=True,dtype=torch.float64):
+
+     
         if loss_type == "MSE":
             return MSE(data_in, data_out, batch_size,shuffle)
         elif loss_type == "MAE":
@@ -70,3 +68,40 @@ def FHN_loos_fromDataSet(folder, batch_size=10000, device=torch.device("cpu"), l
    
         else:
             raise ValueError(f"Unknown loss type: {loss_type}")
+
+import torch
+import numpy as np
+from scipy.integrate import solve_ivp
+
+def generate_dataset(ode_func, t_span, y0, num_points):
+    t = np.linspace(t_span[0], t_span[1], num_points)
+    sol = solve_ivp(ode_func, t_span, y0, t_eval=t)
+    return sol.t, sol.y.T
+
+def default_file_val_plot(val_obj,file="Results_plotter.py"):
+    dump_func=lambda val_obj:[val_obj.dump_f_def(),subprocess.Popen(f"python {file} {val_obj.folder}/", shell=True, stdout=subprocess.PIPE).stdout.read()]
+    return dump_func(val_obj)
+
+def FHN_VAL_fromODE(ode_func, t_span, y0, num_points, name="Val", device=torch.device("cpu"), dtype=torch.float64,dump_factor=0):
+    T, Y = generate_dataset(ode_func, t_span, y0, num_points)
+    data_in = torch.tensor(T, dtype=dtype).to(device)
+    data_out = torch.tensor(Y, dtype=dtype).to(device)
+
+    dump_func=lambda val_obj:[val_obj.dump_f_def(),subprocess.Popen(f"python Results_plotter.py {val_obj.folder}/", shell=True, stdout=subprocess.PIPE).stdout.read()]
+
+    return Validator(data_in, data_out, name, device,dump_factor,dump_func)
+
+def FHN_LOSS_fromODE(ode_func, t_span, y0, num_points=10240,batch_size=1024,shuffle=True, device=torch.device("cpu"), dtype=torch.float64):
+    T, Y = generate_dataset(ode_func, t_span, y0, num_points)
+    data_in = torch.tensor(T, dtype=dtype).to(device).view(-1,1)
+    data_out = torch.tensor(Y, dtype=dtype).to(device)
+    return LPthLoss(data_in, data_out,batch_size,shuffle=True,device=device, p=2)
+
+
+def grad(outputs, inputs):
+                return torch.autograd.grad(
+                outputs, 
+                inputs, 
+                grad_outputs=torch.ones_like(outputs), 
+                create_graph=True
+        )

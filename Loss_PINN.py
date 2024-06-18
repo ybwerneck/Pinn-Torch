@@ -24,7 +24,7 @@ class LOSS_PINN(torch.nn.Module):
         batch  = self.getBatch()
   
 
-        return torch.mean((self.f(batch,model)))
+        return self.f(batch,model)
     
     
     def loss(self,tgt,pred):
