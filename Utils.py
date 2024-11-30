@@ -78,23 +78,28 @@ def generate_dataset(ode_func, t_span, y0, num_points):
     sol = solve_ivp(ode_func, t_span, y0, t_eval=t)
     return sol.t, sol.y.T
 
-def default_file_val_plot(val_obj,file="Results_plotter.py"):
-    dump_func=lambda val_obj:[val_obj.dump_f_def(),subprocess.Popen(f"python {file} {val_obj.folder}/", shell=True, stdout=subprocess.PIPE).stdout.read()]
-    return dump_func(val_obj)
+def default_file_val_plot(val_obj,dump,file="Results_plotter.py"):
+    dump_func=lambda val_obj,dump:[val_obj.dump_f_def(dump=dump) , 0 if dump==False else subprocess.Popen(f"python {file} {val_obj.folder}/", shell=True, stdout=subprocess.PIPE).stdout.read()]
+    return dump_func(val_obj,dump=dump)
 
 def FHN_VAL_fromODE(ode_func, t_span, y0, num_points, name="Val", device=torch.device("cpu"), dtype=torch.float64,dump_factor=0):
     T, Y = generate_dataset(ode_func, t_span, y0, num_points)
     data_in = torch.tensor(T, dtype=dtype).to(device)
     data_out = torch.tensor(Y, dtype=dtype).to(device)
 
-    dump_func=lambda val_obj:[val_obj.dump_f_def(),subprocess.Popen(f"python Results_plotter.py {val_obj.folder}/", shell=True, stdout=subprocess.PIPE).stdout.read()]
+    dump_func=lambda val_obj,dump:[val_obj.dump_f_def(dump=dump),subprocess.Popen(f"python Results_plotter.py {val_obj.folder}/", shell=True, stdout=subprocess.PIPE).stdout.read()]
 
     return Validator(data_in, data_out, name, device,dump_factor,dump_func)
 
-def FHN_LOSS_fromODE(ode_func, t_span, y0, num_points=10240,batch_size=1024,shuffle=True, device=torch.device("cpu"), dtype=torch.float64):
+def FHN_LOSS_fromODE(ode_func, t_span, y0, num_points=10240,batch_size=1024,shuffle=True, device=torch.device("cpu"), dtype=torch.float64,folder=0):
     T, Y = generate_dataset(ode_func, t_span, y0, num_points)
     data_in = torch.tensor(T, dtype=dtype).to(device).view(-1,1)
     data_out = torch.tensor(Y, dtype=dtype).to(device)
+    print(np.shape(data_out[0]))
+    print(np.shape(data_in))
+    if (folder!=0):
+        plt.scatter(data_in.cpu(),data_out.T[0].cpu(),label="Training  points")
+        plt.savefig(f'{folder}/traininig_data.png')
     return LPthLoss(data_in, data_out,batch_size,shuffle=True,device=device, p=2)
 
 
