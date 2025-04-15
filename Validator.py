@@ -76,7 +76,7 @@ class Validator():
     def val(self, model,p=False):
         # Evaluate the model
         self.model=model
-        batch_size = 100*2048  # Choose an appropriate batch size
+        batch_size = 5*2048  # Choose an appropriate batch size
         num_samples = len(self.data_in)
         num_batches = (num_samples + batch_size - 1) // batch_size
 
