@@ -95,8 +95,8 @@ def FHN_LOSS_fromODE(ode_func, t_span, y0, num_points=10240,batch_size=1024,shuf
     T, Y = generate_dataset(ode_func, t_span, y0, num_points)
     data_in = torch.tensor(T, dtype=dtype).to(device).view(-1,1)
     data_out = torch.tensor(Y, dtype=dtype).to(device)
-    print(np.shape(data_out[0]))
-    print(np.shape(data_in))
+ #   print(np.shape(data_out))
+#print(np.shape(data_in))
     if (folder!=0):
         plt.scatter(data_in.cpu(),data_out.T[0].cpu(),label="Training  points")
         plt.savefig(f'{folder}/traininig_data.png')

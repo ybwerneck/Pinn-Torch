@@ -13,10 +13,10 @@ def ensure_at_least_one_column(x):
 class Validator():
     def __init__(self,data_in,target,name="val",device=torch.device("cuda"),dump_f=0,dump_func=0,script=0):
         self.data_in=data_in.to("cpu")
-        print(self.data_in)
+     #   print(self.data_in)
         self.device=device
         self.dump_f=dump_f
-        print("\n\n",dump_func)
+    #    print("\n\n",dump_func)
         self.dump_func=self.dump_f_def if  dump_func==0 else lambda dump:dump_func(self,dump=dump) 
         self.target=target.to("cpu")
         self.name=name
@@ -31,7 +31,7 @@ class Validator():
     
 
     def dump_f_def(self,target=0,out=0,data_in=0,sufix="",dump=False):       
-        print(dump)
+       # print(dump)
         try:
             print(target,out)
             if(target==0):
@@ -44,8 +44,7 @@ class Validator():
             a=0
         mean_error = torch.mean(torch.abs(out-target)).detach()
         max_error =torch.max(torch.abs(out-target)).detach()
-        print(mean_error)
-        print(max_error)
+       # print("Validation error: ", mean_error.item(), max_error.item())
         new_data = np.array([mean_error.detach().cpu(), max_error.detach().cpu()])
         # Write data to HDF5 file
         
@@ -73,16 +72,16 @@ class Validator():
                     hf.create_dataset("pred", data=out.detach().cpu().numpy())
                     hf.create_dataset("input", data=data_in.detach().cpu().numpy())
                 
+
     def val(self, model,p=False):
         # Evaluate the model
         self.model=model
-        batch_size = 100*2048  # Choose an appropriate batch size
+        batch_size = 5*2048  # Choose an appropriate batch size
         num_samples = len(self.data_in)
         num_batches = (num_samples + batch_size - 1) // batch_size
 
         # Initialize variables to store total absolute error and maximum error
         total_error = 0
-        max_error = float('-inf')
         data_out=torch.zeros((num_samples,len(self.target.T)),requires_grad=False).to("cpu")
         # Iterate over batches
         with torch.no_grad():
@@ -94,6 +93,7 @@ class Validator():
                 batch_target = self.target[start_idx:end_idx]
 
                 # Evaluate the model on the current batch
+             #   print(self.device)
                 cudad=ensure_at_least_one_column(batch_data.to(self.device))
                 #print(np.shape(cudad))
 
@@ -113,7 +113,9 @@ class Validator():
         self.count+=1
 
                     
-
+        a=0
+        mean_error = torch.mean(torch.abs(data_out-self.target)).detach()
+        max_error =torch.max(torch.abs(data_out-self.target)).detach()
         self.dump_func(dump=dump)
     
         self.count+=1
@@ -122,5 +124,5 @@ class Validator():
                 self.script()
 
 
-        return max_error
+        return mean_error
 

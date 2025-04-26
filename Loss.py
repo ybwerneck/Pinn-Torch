@@ -27,6 +27,7 @@ class LOSS(torch.nn.Module):
      
 
         self.device=device
+        print(device)
         self.data_in=data_in.to(device )
         self.target=target.to(device)
         self.batch_size=batch_size
