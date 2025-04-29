@@ -24,7 +24,6 @@ class FullyConnectedNetwork(nn.Module):
         self.layers.append(nn.Linear(in_features, output_shape,bias=True))
 
     def forward(self, x):
-        i=0
         for layer in self.layers:
                 x = layer(x)
           
@@ -33,13 +32,21 @@ class FullyConnectedNetwork(nn.Module):
     
     
 activation_map = {
-    "ReLU": nn.ReLU,
-    "Tanh": nn.Tanh,
-    "Sigmoid": nn.Sigmoid,
+    "Elu": nn.ELU,
     "LeakyReLU": nn.LeakyReLU,
-    "ELU": nn.ELU,
-    "SiLU": nn.SiLU  # SiLU is also known as Swish
-}    
+    "Sigmoid": nn.Sigmoid,
+    "Softplus": nn.Softplus,
+    "Tanh": nn.Tanh,
+    "Linear": nn.Linear,
+    "ReLU": nn.ReLU,
+    "RReLU": nn.RReLU,
+    "SELU": nn.SELU,
+    "CELU": nn.CELU,
+    "GELU": nn.GELU,
+    "SiLU": nn.SiLU,
+    "GLU": nn.GLU,
+}
+
 class FullyConnectedNetworkMod(FullyConnectedNetwork):
     def __init__(self, input_shape, output_shape, hidden_sizes,dtype=torch.float32):
         super(FullyConnectedNetworkMod, self).__init__(input_shape, output_shape,dtype=dtype)
