@@ -1,0 +1,6 @@
+trainer/*
+training_data/*
+__pycache__/*
+.vs/*
+fisiocomPinn.egg-info/*
+*.pyc
