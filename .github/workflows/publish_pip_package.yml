@@ -1,0 +1,49 @@
+name: Publish Python Package to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-publish:
+    # This job runs on the latest version of Ubuntu.
+    runs-on: ubuntu-latest
+
+    # The id-token permission is required for OpenID Connect (OIDC)
+    # authentication with PyPI. This is the most secure way to authenticate.
+    permissions:
+      id-token: write
+
+    steps:
+      # Step 1: Checkout the repository code.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Needed to get all commit history for versioning
+
+      # Step 2: Set up a Python environment.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # Specify a Python version
+
+      # Step 3: Install the necessary build tools.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      # Step 4: Build the source distribution and wheel.
+      - name: Build sdist and wheel
+        run: python -m build
+
+      # Step 5: Publish the package to PyPI using a dedicated action.
+      # This action automatically handles authentication with PyPI using OIDC.
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      #Step 6
+      # Add your PyPI API token: Go to your GitHub repository settings, then Secrets and variables > Actions > New repository secret. Add a new secret with the name PYPI_API_TOKEN and the API token you get from your PyPI account. To get a PyPI API Token register at https://pypi.org/account/register/
+
+      #Step 7
+      #Create a release: After you've made a change and updated the version in your setup.py file, simply go to your repository's main page, click on Releases, and then Create a new release. This action will trigger the workflow, and your package will be published!
