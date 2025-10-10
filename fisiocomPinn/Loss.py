@@ -1,180 +1,94 @@
 from .dependencies import *
 
-
-# Loss base class
-def ensure_at_least_one_column(x):
-    # If x is 1-dimensional, reshape to (len(x), 1)
-    if x.ndim == 1:
-        return x.reshape(-1, 1)
-    # If x is already 2-dimensional, return it unchanged
-    elif x.ndim == 2:
-        return x
-    else:
-        raise ValueError("Input array must be 1D or 2D")
+loss_map = {
+    "MAE": lambda tgt, pred: torch.mean(torch.abs(tgt - pred)),
+    "MSE": lambda tgt, pred: torch.mean((tgt - pred).ravel() ** 2),
+    "RMSE": lambda tgt, pred: torch.mean(torch.sum(((tgt - pred)) ** 2, dim=1) ** 0.5),
+    "KLDivergenceLoss": lambda tgt, pred: F.kl_div(pred, tgt),
+    "CosineSimilarityLoss": lambda tgt, pred: 1 - F.cosine_similarity(pred, tgt),
+    "LPthLoss": lambda tgt, pred, p: torch.mean(
+        torch.pow(torch.sum(torch.pow(torch.abs(tgt - pred), p), axis=1), 1 / p)
+    ),
+    "L2": lambda tgt, pred: torch.mean(
+        torch.sqrt(torch.sum((pred - tgt) ** 2, dim=list(range(1, (pred - tgt).ndim))))
+        / torch.sqrt(torch.sum(tgt**2, dim=list(range(1, tgt.ndim))) + 1e-8)
+    ),
+    "L2_squared": lambda tgt, pred: torch.mean(
+        (torch.sum((pred - tgt) ** 2, dim=list(range(1, (pred - tgt).ndim))))
+        / (torch.sum(tgt**2, dim=list(range(1, tgt.ndim))) + 1e-8)
+    ),
+}
 
 
 class LOSS(torch.nn.Module):
 
     def __init__(
         self,
-        data_in,
-        target,
-        batch_size=10000,
-        shuffle=False,
-        dtype=torch.float32,
-        device=-1,
+        device=torch.device("cuda"),
+        criterium="RMSE",
         name="Loss",
+        batch_size=10000,
     ):
-        self.name = name
-
-        if shuffle:
-            datac, tc = ensure_at_least_one_column(
-                data_in.to("cpu")
-            ), ensure_at_least_one_column(target.to("cpu"))
-
-            combined = torch.cat((datac, tc), dim=1)
-            combined = combined[torch.randperm(combined.size(0))]
-
-            data_in, target = torch.split(combined, [len(datac.T), len(tc.T)], dim=1)
-
         self.device = device
-        self.data_in = data_in.to(device)
-        self.target = target.to(device)
+        self.criterium = loss_map[criterium]
+        self.name = name
         self.batch_size = batch_size
         self.i = 0
-        self.len_d = len(target)
+        self.eval = False
+        self.batchGen = False
+        self.data_loss = False
 
         super(LOSS, self).__init__()
 
+    def add_data(self, data_in, target):
+        self.data_in = data_in
+        self.target = target
+        self.data_loss = True
+
     def getBatch(self):
-        batch = self.data_in[self.i : self.i + self.batch_size]
-        tgt = self.target[self.i : self.i + self.batch_size]
-        self.i += self.batch_size
 
-        if self.i + self.batch_size > len(self.data_in):
-            self.i = 0
+        if self.data_loss:
+            batch = self.data_in[self.i : self.i + self.batch_size]
+            tgt = self.target[self.i : self.i + self.batch_size]
+            self.i += self.batch_size
 
-        return batch.to(self.device), tgt.to(self.device)
+            if self.i + self.batch_size > len(self.data_in):
+                self.i = 0
 
-    def forward(self, model):
-        batch, tgt = self.getBatch()
-        pred = model(batch)
+            return batch.to(self.device), tgt.to(self.device)
 
-        return self.loss(tgt, pred)
+        else:
+            print("Data not set")
 
-    def loss(self, tgt, pred):
-        print("Not defined")
+            return None
 
+    def setBatchGenerator(self, batch_generator, *batch_args):
+        self.batch_generator = batch_generator
+        self.batch_args = batch_args
+        self.batchGen = True
 
-class MAE(LOSS):
-    def __init__(
-        self,
-        data_in,
-        target,
-        device="cpu",
-        name="loss",
-        batch_size=10000,
-        shuffle=False,
-    ):
-        super(MAE, self).__init__(
-            data_in, target, batch_size, shuffle, device=device, name=name
-        )
+    def setEvalFunction(self, eval_func, *eval_args):
+        self.eval_func = eval_func
+        self.eval_args = eval_args
+        self.eval = True
 
-    def loss(self, tgt, pred):
-        return torch.mean(torch.abs(tgt - pred))
+    def forward(self, model, *loss_args):
 
-
-class MSE(LOSS):
-    def __init__(
-        self,
-        data_in,
-        target,
-        device="cpu",
-        name="loss",
-        batch_size=10000,
-        shuffle=False,
-    ):
-        super(MSE, self).__init__(
-            data_in, target, batch_size, shuffle, device=device, name=name
-        )
-
-    def loss(self, tgt, pred):
-        return torch.mean((tgt - pred).ravel() ** 2)
-
-
-class RMSE(LOSS):
-    def __init__(
-        self,
-        data_in,
-        target,
-        device="cpu",
-        name="loss",
-        batch_size=10000,
-        shuffle=False,
-    ):
-        super(RMSE, self).__init__(
-            data_in, target, batch_size, shuffle, device=device, name=name
-        )
-
-    def loss(self, tgt, pred):
-        return torch.mean(torch.sum(((tgt - pred)) ** 2, dim=1) ** 0.5)
-
-
-class KLDivergenceLoss(LOSS):
-    def __init__(
-        self,
-        data_in,
-        target,
-        device="cpu",
-        name="loss",
-        batch_size=10000,
-        shuffle=False,
-    ):
-        super(KLDivergenceLoss, self).__init__(
-            data_in, target, batch_size, shuffle, device=device, name=name
-        )
-
-    def loss(self, tgt, pred):
-        return F.kl_div(pred, tgt)
-
-
-class CosineSimilarityLoss(LOSS):
-    def __init__(
-        self,
-        data_in,
-        target,
-        device="cpu",
-        name="loss",
-        batch_size=10000,
-        shuffle=False,
-    ):
-        super(CosineSimilarityLoss, self).__init__(
-            data_in, target, batch_size, shuffle, device=device, name=name
-        )
-
-    def loss(self, tgt, pred):
-        return 1 - F.cosine_similarity(pred, tgt)
-
-
-class LPthLoss(LOSS):
-    def __init__(
-        self,
-        data_in,
-        target,
-        batch_size=10000,
-        p=2,
-        shuffle=False,
-        device=torch.device("cpu"),
-        name="LPthLoss",
-    ):
-        super(LPthLoss, self).__init__(
-            data_in, target, batch_size, shuffle, device=device, name=name
-        )
-        self.p = p
-
-    def loss(self, tgt, pred):
-        return torch.mean(
-            torch.pow(
-                torch.sum(torch.pow(torch.abs(tgt - pred), self.p), axis=1), 1 / self.p
+        if self.batchGen:
+            batch, tgt = self.batch_generator(
+                self.batch_size, self.device, *self.batch_args
             )
-        )
+
+        else:
+            batch, tgt = self.getBatch()
+
+        if self.eval:
+            pred = self.eval_func(batch, model, *self.eval_args)
+
+        elif self.data_loss:
+            pred = model(batch)
+
+        else:
+            print("None evaluation function presented")
+
+        return self.criterium(tgt, pred, *loss_args)
