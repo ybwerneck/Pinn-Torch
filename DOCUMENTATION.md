@@ -331,54 +331,6 @@ trained_model, loss_history = trainer.train()
 
 ---
 
-## 📊 Visualization Utilities
-
-Functions like `default_file_val_plot()` can automatically generate result plots from a validation object by calling:
-
-```python
-default_file_val_plot(validation_object, dump=True)
-```
-
----
-
-## 🧠 Example Workflow
-
-```python
-from fisiocomPinn.Utils import FHN_LOSS_fromODE
-from fisiocomPinn.Trainer import Trainer
-from fisiocomPinn.Loss import LOSS
-import torch
-
-# Define ODE and neural network
-def fhn_ode(t, y):
-    v, w = y
-    dvdt = v - v**3/3 - w
-    dwdt = 0.08 * (v + 0.7 - 0.8 * w)
-    return [dvdt, dwdt]
-
-model = torch.nn.Sequential(
-    torch.nn.Linear(1, 64),
-    torch.nn.Tanh(),
-    torch.nn.Linear(64, 2)
-)
-
-# Generate loss from ODE data
-loss_obj = FHN_LOSS_fromODE(fhn_ode, (0, 20), [1.0, 0.0])
-
-# Trainer setup
-trainer = Trainer(
-    n_epochs=10000,
-    model=model,
-    batch_size=256,
-    optimizer=torch.optim.Adam(model.parameters(), lr=1e-3)
-)
-
-trainer.add_loss(loss_obj)
-trainer.train()
-```
-
----
-
 ## 🪪 License
 
 This library is distributed under the **GNU General Public License v3.0**.
