@@ -121,6 +121,6 @@ See [`LICENSE.md`](./LICENSE.md) or [the full text](https://www.gnu.org/licenses
 
 **Supervised Research:**
 Federal University of Juiz de Fora (UFJF) — *PhD in Computational Modeling (PPGMC)*
-FisiocomPINN Group — *Computational Physiology & AI for Scientific Modeling*
+Fisiocom Group — *Computational Physiology and High-Perfomance Computing Laboratory*
 
 
