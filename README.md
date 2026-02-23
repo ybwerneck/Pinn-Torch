@@ -115,9 +115,9 @@ See [`LICENSE.md`](./LICENSE.md) or [the full text](https://www.gnu.org/licenses
 
 **Developed by:**
 
-* **Yan Werneck** — Lead Developer (UFJF / Fisiocomp Research Group)
+* **Yan Werneck** (UFJF / Fisiocomp Research Group)
 
-* **Thiago Esterci** — Co-developer (UFJF / Fisiocomp Research Group)
+* **Thiago Esterci** (UFJF / Fisiocomp Research Group)
 
 **Supervised Research:**
 Federal University of Juiz de Fora (UFJF) — *PhD in Computational Modeling (PPGMC)*
