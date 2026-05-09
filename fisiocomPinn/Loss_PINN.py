@@ -53,7 +53,7 @@ class LOSS_PINN(torch.nn.Module):
         self.eval = True
 
     def forward(self, model, *loss_args):
-        
+
         if self.batchGen:
             batch, tgt = self.batch_generator(
                 self.batch_size, self.device, *self.batch_args
