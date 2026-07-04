@@ -319,3 +319,51 @@ def structured_mesh(n, L=1.0):
             faces.append([v00, v11, v01])   # upper-left triangle
 
     return vertices, np.array(faces, dtype=np.int32)
+
+
+def annular_mesh(n_r, n_theta, inner_r, outer_r, center=(0.0, 0.0)):
+    """
+    Structured triangular mesh on an annular (ring-shaped) domain.
+
+    Nodes are placed on n_r concentric circles with n_theta equally-spaced
+    angles each.  Each quad cell is split into two triangles; the last
+    angular cell wraps back to theta=0 so the ring is closed.
+
+    Parameters
+    ----------
+    n_r     : int   — number of radial layers (≥ 2)
+    n_theta : int   — number of nodes per ring
+    inner_r : float — inner radius
+    outer_r : float — outer radius
+    center  : (2,) — centre of the annulus
+
+    Returns
+    -------
+    vertices : (n_r * n_theta, 2) numpy array
+    faces    : (2 * (n_r-1) * n_theta, 3) int numpy array
+    """
+    cx, cy = center
+    radii  = np.linspace(inner_r, outer_r, n_r)
+    theta  = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
+
+    # vertices: ring 0 first (inner), ring n_r-1 last (outer)
+    verts = np.array([
+        [cx + r * np.cos(t), cy + r * np.sin(t)]
+        for r in radii
+        for t in theta
+    ], dtype=np.float64)
+
+    # faces: each quad (i, j) → (i+1, j) split into 2 triangles
+    # theta wraps: j+1 taken mod n_theta
+    faces = []
+    for i in range(n_r - 1):
+        for j in range(n_theta):
+            j1  = (j + 1) % n_theta
+            v00 = i       * n_theta + j
+            v10 = (i + 1) * n_theta + j
+            v01 = i       * n_theta + j1
+            v11 = (i + 1) * n_theta + j1
+            faces.append([v00, v10, v11])
+            faces.append([v00, v11, v01])
+
+    return verts, np.array(faces, dtype=np.int32)
