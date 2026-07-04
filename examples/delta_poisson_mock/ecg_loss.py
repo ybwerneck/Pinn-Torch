@@ -7,6 +7,7 @@ import sys
 import os
 import numpy as np
 import torch
+import h5py
 
 
 class ECGLoss:
@@ -113,6 +114,82 @@ class ECGLoss:
 
         residual = (self.V_meas - V_pred) / self.norm_per_lead
         return residual.pow(2).mean()
+
+
+# ------------------------------------------------------------------
+# ECG Validator — Trainer-compatible, dumps phi / ECG to HDF5
+# ------------------------------------------------------------------
+
+class ECGValidator:
+    """
+    Validation loop for the Delta-PoIssoNN pipeline.
+
+    Runs the full model → p → Poisson → φ → ECG pipeline under
+    torch.no_grad(), compares φ_hat against φ_true, and appends
+    error statistics to an HDF5 file.  Every `dump_f` calls it also
+    writes a full snapshot (φ_hat, φ_true, V_pred, V_meas).
+
+    Interface mirrors fisiocomPinn.Validator so Trainer.add_validator()
+    accepts it directly.
+
+    Parameters
+    ----------
+    loss_fn  : ECGLoss — provides grid, eig_vecs, and ECG operators
+    phi_true : (N,) numpy array — ground-truth activation map
+    folder   : str   — output directory for HDF5 files
+    name     : str   — file name prefix
+    dump_f   : int   — snapshot every dump_f validation calls (default 1)
+    """
+
+    def __init__(self, loss_fn, phi_true, folder, name='ecg_val', dump_f=1):
+        self.loss_fn  = loss_fn
+        self.phi_true = torch.tensor(phi_true, dtype=loss_fn.eig_vecs.dtype)
+        self.name     = name
+        self.dump_f   = dump_f
+        self.count    = 0
+        self.setFolder(folder)
+
+    def setFolder(self, folder):
+        self.folder = folder
+        os.makedirs(folder, exist_ok=True)
+        with h5py.File(f"{folder}/{self.name}_err.h5", "w") as hf:
+            hf.create_dataset("error_stats", data=np.empty((0, 2), dtype=np.float32))
+
+    def val(self, model):
+        was_training = model.training
+        model.eval()
+        with torch.no_grad():
+            p_hat   = model(self.loss_fn.eig_vecs)
+            q_hat   = self.loss_fn._apply_conductivity(p_hat)
+            b_hat   = self.loss_fn.grid.assemble_rhs(q_hat.double())
+            phi_hat = self.loss_fn.grid.solve_poisson(b_hat).to(p_hat.dtype)
+            V_pred  = self.loss_fn._ecg_forward(phi_hat)
+        if was_training:
+            model.train()
+
+        phi_hat_np  = phi_hat.numpy()
+        phi_true_np = self.phi_true.numpy()
+        mean_err = float(np.mean(np.abs(phi_hat_np - phi_true_np)))
+        max_err  = float(np.max(np.abs(phi_hat_np - phi_true_np)))
+
+        # Append error row
+        with h5py.File(f"{self.folder}/{self.name}_err.h5", "a") as hf:
+            old = np.array(hf["error_stats"])
+            del hf["error_stats"]
+            row = np.array([[mean_err, max_err]], dtype=np.float32)
+            hf.create_dataset("error_stats", data=np.vstack([old, row]))
+
+        # Full snapshot
+        if self.count % self.dump_f == 0:
+            snap = f"{self.folder}/{self.name}_{self.count:06d}.h5"
+            with h5py.File(snap, "w") as hf:
+                hf.create_dataset("phi_hat",  data=phi_hat_np.astype(np.float32))
+                hf.create_dataset("phi_true", data=phi_true_np.astype(np.float32))
+                hf.create_dataset("V_pred",   data=V_pred.numpy().astype(np.float32))
+                hf.create_dataset("V_meas",   data=self.loss_fn.V_meas.numpy().astype(np.float32))
+
+        self.count += 1
+        return mean_err
 
 
 # ------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
+import h5py
 
 
 class Visualizer:
@@ -184,6 +185,70 @@ class Visualizer:
         for ax in axes[n_leads:]:
             ax.set_visible(False)
 
+        fig.tight_layout()
+        return fig
+
+
+    # ------------------------------------------------------------------
+    # HDF5 snapshot reader
+    # ------------------------------------------------------------------
+
+    def plot_from_h5(self, h5_path, t_grid, n_leads_shown=4, figsize=(16, 4)):
+        """
+        Read a validator snapshot written by ECGValidator and produce a
+        three-panel comparison: φ_hat vs φ_true error map | ECG overlay.
+
+        Parameters
+        ----------
+        h5_path      : str — path to a snapshot HDF5 (ecg_val_XXXXXX.h5)
+        t_grid       : (Nt,) array — time grid for ECG axis
+        n_leads_shown: int — number of ECG leads to draw
+        """
+        with h5py.File(h5_path, "r") as hf:
+            phi_hat  = np.array(hf["phi_hat"])
+            phi_true = np.array(hf["phi_true"])
+            V_pred   = np.array(hf["V_pred"])
+            V_meas   = np.array(hf["V_meas"])
+
+        fig, axes = plt.subplots(1, 4, figsize=figsize)
+
+        self.plot_field(phi_true,                   title='φ true',  ax=axes[0], cmap='hot')
+        self.plot_field(phi_hat,                    title='φ pred',  ax=axes[1], cmap='hot')
+        self.plot_field(np.abs(phi_hat - phi_true), title='|error|', ax=axes[2], cmap='Reds')
+
+        ax = axes[3]
+        cmap = plt.cm.tab10
+        for i in range(min(n_leads_shown, len(V_meas))):
+            c = cmap(i / max(n_leads_shown, 1))
+            ax.plot(t_grid, V_meas[i], color=c, linewidth=1.2, label=f'L{i}')
+            ax.plot(t_grid, V_pred[i], color=c, linewidth=1.2, linestyle='--')
+        ax.set_title('ECG: meas (—) vs pred (--)')
+        ax.set_xlabel('t')
+        ax.legend(fontsize=7)
+
+        fig.tight_layout()
+        return fig
+
+    @staticmethod
+    def plot_err_h5(err_h5_path, figsize=(6, 3)):
+        """
+        Plot mean and max φ error over validation calls from the
+        *_err.h5 file written by ECGValidator.
+
+        Parameters
+        ----------
+        err_h5_path : str — path to *_err.h5
+        """
+        with h5py.File(err_h5_path, "r") as hf:
+            stats = np.array(hf["error_stats"])   # (n_calls, 2)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.semilogy(stats[:, 0], label='mean |φ error|')
+        ax.semilogy(stats[:, 1], label='max  |φ error|')
+        ax.set_xlabel('validation call')
+        ax.set_ylabel('|φ_hat − φ_true|')
+        ax.set_title('Validation error')
+        ax.legend()
         fig.tight_layout()
         return fig
 

@@ -10,31 +10,35 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import numpy as np
 import torch
-import torch.optim as optim
 import matplotlib.pyplot as plt
 
 from fisiocomPinn import Grid, structured_mesh, EigenDirectionNet
+from fisiocomPinn.Trainer import Trainer
 from visualizer import Visualizer
 from ground_truth import (make_phi_true, make_t_grid,
                           make_electrodes, precompute_lead_gradients,
                           ecg_forward)
-from ecg_loss import ECGLoss
+from ecg_loss import ECGLoss, ECGValidator
 
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
-N_SIDE    = 33
-L         = 1.0
-N_EIG     = 16
-N_LAYERS  = 5
-WIDTH     = 64
-N_ITER    = 500
-LR        = 1e-3
-LOG_EVERY = 50
+N_SIDE      = 33
+L           = 1.0
+N_EIG       = 16
+N_LAYERS    = 5
+WIDTH       = 64
+N_ITER      = 500
+LR          = 1e-3
+VAL_FREQ    = 50       # validate every VAL_FREQ iterations
+DUMP_FREQ   = 1        # snapshot every DUMP_FREQ validation calls
+OUT_DIR     = 'runs/mock'
 
 STIM    = (0.05, 0.05)
 D_ANISO = np.array([[3.0, 0.5],
                     [0.5, 1.0]])
+
+os.makedirs(OUT_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------
 # 1. Mesh + visualiser
@@ -62,15 +66,11 @@ grad_Z_np  = precompute_lead_gradients(grid, electrodes)
 V_meas_np  = ecg_forward(phi_true, grid, grad_Z_np, t_grid_np)
 
 print(f"phi_true range: {phi_true.min():.3f} – {phi_true.max():.3f}")
-print(f"t_grid   0 – {t_grid_np[-1]:.3f}  ({len(t_grid_np)} steps)")
 print(f"V_meas   shape={V_meas_np.shape}  range={V_meas_np.min():.3f} – {V_meas_np.max():.3f}")
 
 # ------------------------------------------------------------------
-# 4. Network + loss
+# 4. Loss, model, validator
 # ------------------------------------------------------------------
-model = EigenDirectionNet(Ne=N_EIG, n_layers=N_LAYERS, width=WIDTH)
-print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
-
 loss_fn = ECGLoss(
     grid     = grid,
     eig_vecs = eig_vecs,
@@ -80,78 +80,59 @@ loss_fn = ECGLoss(
     D        = D_ANISO,
 )
 
-optimizer = optim.Adam(model.parameters(), lr=LR)
+model = EigenDirectionNet(Ne=N_EIG, n_layers=N_LAYERS, width=WIDTH)
+print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
+
+validator = ECGValidator(
+    loss_fn  = loss_fn,
+    phi_true = phi_true,
+    folder   = OUT_DIR,
+    name     = 'ecg_val',
+    dump_f   = DUMP_FREQ,
+)
 
 # ------------------------------------------------------------------
-# 5. Training loop
+# 5. Train with Trainer
 # ------------------------------------------------------------------
-history = []
+trainer = Trainer(
+    n_epochs    = N_ITER,
+    model       = model,
+    adaptive    = False,
+    lr          = LR,
+    print_steps = 50,
+)
+trainer.add_loss(loss_fn, weigth=1)
+trainer.add_validator(validator, freq=VAL_FREQ)
 
-print(f"\nTraining for {N_ITER} iterations...")
-for it in range(N_ITER):
-    optimizer.zero_grad()
-    loss = loss_fn.forward(model)
-    loss.backward()
-    optimizer.step()
-
-    val = loss.item()
-    history.append(val)
-    if (it + 1) % LOG_EVERY == 0 or it == 0:
-        print(f"  iter {it+1:4d}/{N_ITER}  loss={val:.6f}")
+model, loss_dict = trainer.train()
 
 # ------------------------------------------------------------------
-# 6. Final evaluation
-# ------------------------------------------------------------------
-model.eval()
-with torch.no_grad():
-    p_hat   = model(eig_vecs)                              # (N, 2)
-    q_hat   = loss_fn._apply_conductivity(p_hat)
-    b_hat   = grid.assemble_rhs(q_hat.double())
-    phi_hat = grid.solve_poisson(b_hat).float().numpy()
-    phi_hat -= phi_hat.min()
-
-    phi_hat_t = grid.solve_poisson(grid.assemble_rhs(q_hat.double())).to(q_hat.dtype)
-    V_pred    = loss_fn._ecg_forward(phi_hat_t).numpy()
-
-error_phi = np.mean(np.abs(phi_hat - phi_true))
-print(f"\nFinal  loss={history[-1]:.6f}  |phi_hat - phi_true| mean={error_phi:.4f}")
-
-# ------------------------------------------------------------------
-# 7. Plots
+# 6. Plots
 # ------------------------------------------------------------------
 
-# Loss curve
+# Loss curve from Trainer dict
+history = loss_dict[loss_fn.name]
 fig_loss, ax_l = plt.subplots(figsize=(6, 3))
 ax_l.semilogy(history)
 ax_l.set_xlabel('iteration')
 ax_l.set_ylabel('ECG loss')
 ax_l.set_title('Training loss')
 fig_loss.tight_layout()
-fig_loss.savefig('loss_curve.png', dpi=120)
+fig_loss.savefig(f'{OUT_DIR}/loss_curve.png', dpi=120)
 print("Saved loss_curve.png")
 
-# Activation map comparison
-fig_phi, axes = plt.subplots(1, 3, figsize=(14, 4))
-viz.plot_field(phi_true,                     title='phi_true',  ax=axes[0], cmap='hot')
-viz.plot_field(phi_hat,                      title='phi_hat',   ax=axes[1], cmap='hot')
-viz.plot_field(np.abs(phi_hat - phi_true),   title='|error|',   ax=axes[2], cmap='Reds')
-fig_phi.tight_layout()
-fig_phi.savefig('phi_comparison.png', dpi=120)
-print("Saved phi_comparison.png")
+# Validation error from HDF5
+fig_err = Visualizer.plot_err_h5(f'{OUT_DIR}/ecg_val_err.h5')
+fig_err.savefig(f'{OUT_DIR}/val_error.png', dpi=120)
+print("Saved val_error.png")
 
-# ECG overlay
-fig_ecg = viz.plot_leads(t_grid_np, V_meas_np, V_pred=V_pred)
-fig_ecg.suptitle('ECG: measured (black) vs predicted (red)', y=1.01)
-fig_ecg.tight_layout()
-fig_ecg.savefig('ecg_overlay.png', dpi=120)
-print("Saved ecg_overlay.png")
-
-# Summary: direction field + phi + ECG
-fig_sum = viz.plot_summary(
-    phi_hat, p_hat.numpy(), t_grid_np, V_meas_np,
-    electrodes=electrodes, V_pred=V_pred, n_leads_shown=9,
-)
-fig_sum.savefig('summary.png', dpi=120)
-print("Saved summary.png")
+# Final snapshot comparison (last dump)
+last_snap = sorted(
+    [f for f in os.listdir(OUT_DIR) if f.startswith('ecg_val_') and f.endswith('.h5') and 'err' not in f]
+)[-1]
+fig_snap = viz.plot_from_h5(f'{OUT_DIR}/{last_snap}', t_grid_np, n_leads_shown=9)
+fig_snap.suptitle(f'Final validation: {last_snap}', y=1.01)
+fig_snap.savefig(f'{OUT_DIR}/final_comparison.png', dpi=120)
+print(f"Saved final_comparison.png  (from {last_snap})")
 
 plt.show()
