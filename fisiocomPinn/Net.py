@@ -28,6 +28,41 @@ class FullyConnectedNetwork(nn.Module):
         return x
 
 
+class EigenDirectionNet(FullyConnectedNetwork):
+    """
+    Direction-field network for Delta-PINNs on triangular meshes.
+
+    Follows Costabal et al. (2022): the input x is the eigenfunction values
+    at the queried nodes — the caller decides which nodes (full mesh or a
+    mini-batch of sampled nodes). The model is agnostic to the sampling.
+
+    Output is a unit-normalised direction field (n_nodes, 2).
+    The eps guard prevents NaN gradients when p_raw passes through zero.
+
+    Parameters
+    ----------
+    Ne     : int   — number of eigenfunctions (input dimension)
+    n_layers : int — number of hidden layers
+    width  : int   — neurons per hidden layer
+    eps    : float — unit-normalisation denominator guard
+    dtype  : torch dtype
+    """
+
+    def __init__(self, Ne, n_layers, width, eps=1e-8, dtype=torch.float32):
+        super().__init__(
+            input_shape=Ne,
+            output_shape=2,
+            hidden_sizes=[width] * n_layers,
+            dtype=dtype,
+        )
+        self.eps = eps
+
+    def forward(self, x):
+        p_raw = super().forward(x)                       # (n_nodes, 2)
+        norm  = torch.norm(p_raw, dim=-1, keepdim=True)  # (n_nodes, 1)
+        return p_raw / (norm + self.eps)                  # (n_nodes, 2) unit vectors
+
+
 activation_map = {
     "Elu": nn.ELU,
     "LeakyReLU": nn.LeakyReLU,
