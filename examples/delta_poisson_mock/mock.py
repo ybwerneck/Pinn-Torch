@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 from fisiocomPinn import Grid, structured_mesh, EigenDirectionNet
 from fisiocomPinn.Trainer import Trainer
@@ -32,7 +33,7 @@ N_ITER      = 500
 LR          = 1e-3
 VAL_FREQ    = 50       # validate every VAL_FREQ iterations
 DUMP_FREQ   = 1        # snapshot every DUMP_FREQ validation calls
-OUT_DIR     = 'runs/mock'
+OUT_DIR     = os.path.join('runs', datetime.now().strftime('%Y%m%d_%H%M%S'))
 
 STIM    = (0.05, 0.05)
 D_ANISO = np.array([[3.0, 0.5],

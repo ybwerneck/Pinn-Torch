@@ -8,6 +8,7 @@ import os
 import numpy as np
 import torch
 import h5py
+import multiprocessing as mp
 
 
 class ECGLoss:
@@ -117,6 +118,56 @@ class ECGLoss:
 
 
 # ------------------------------------------------------------------
+# Async plot worker (module-level so multiprocessing can pickle it)
+# ------------------------------------------------------------------
+
+def _plot_snapshot_worker(h5_path, vertices, faces, t_grid, out_dir, n_leads=9):
+    """Reads one HDF5 snapshot and saves a comparison figure to out_dir."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.tri as tri
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    with h5py.File(h5_path, 'r') as hf:
+        phi_hat  = np.array(hf['phi_hat'])
+        phi_true = np.array(hf['phi_true'])
+        V_pred   = np.array(hf['V_pred'])
+        V_meas   = np.array(hf['V_meas'])
+
+    triang = tri.Triangulation(vertices[:, 0], vertices[:, 1], faces)
+
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+
+    for ax, field, title, cmap in [
+        (axes[0], phi_true,                   'φ true',  'hot'),
+        (axes[1], phi_hat,                    'φ pred',  'hot'),
+        (axes[2], np.abs(phi_hat - phi_true), '|error|', 'Reds'),
+    ]:
+        tc = ax.tripcolor(triang, field, shading='gouraud', cmap=cmap)
+        plt.colorbar(tc, ax=ax)
+        ax.set_aspect('equal')
+        ax.set_title(title)
+
+    ax = axes[3]
+    cmap_lines = plt.cm.tab10
+    for i in range(min(n_leads, len(V_meas))):
+        c = cmap_lines(i / max(n_leads, 1))
+        ax.plot(t_grid, V_meas[i], color=c, linewidth=1.2, label=f'L{i}')
+        ax.plot(t_grid, V_pred[i], color=c, linewidth=1.2, linestyle='--')
+    ax.set_title('ECG: meas (—) vs pred (--)')
+    ax.set_xlabel('t')
+    ax.legend(fontsize=7)
+
+    fig.tight_layout()
+    out_path = os.path.join(out_dir, 'comparison.png')
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    print(f'[plot] saved {out_path}', flush=True)
+
+
+# ------------------------------------------------------------------
 # ECG Validator — Trainer-compatible, dumps phi / ECG to HDF5
 # ------------------------------------------------------------------
 
@@ -134,19 +185,28 @@ class ECGValidator:
 
     Parameters
     ----------
-    loss_fn  : ECGLoss — provides grid, eig_vecs, and ECG operators
-    phi_true : (N,) numpy array — ground-truth activation map
-    folder   : str   — output directory for HDF5 files
-    name     : str   — file name prefix
-    dump_f   : int   — snapshot every dump_f validation calls (default 1)
+    loss_fn    : ECGLoss — provides grid, eig_vecs, and ECG operators
+    phi_true   : (N,) numpy array — ground-truth activation map
+    folder     : str   — output directory for HDF5 files
+    name       : str   — file name prefix
+    dump_f     : int   — snapshot every dump_f validation calls (default 1)
+    plot_async : bool  — spawn a background process to plot each snapshot
+                         into a subfolder it_XXXXXX/ (default True)
     """
 
-    def __init__(self, loss_fn, phi_true, folder, name='ecg_val', dump_f=1):
-        self.loss_fn  = loss_fn
-        self.phi_true = torch.tensor(phi_true, dtype=loss_fn.eig_vecs.dtype)
-        self.name     = name
-        self.dump_f   = dump_f
-        self.count    = 0
+    def __init__(self, loss_fn, phi_true, folder, name='ecg_val',
+                 dump_f=1, plot_async=True):
+        self.loss_fn    = loss_fn
+        self.phi_true   = torch.tensor(phi_true, dtype=loss_fn.eig_vecs.dtype)
+        self.name       = name
+        self.dump_f     = dump_f
+        self.plot_async = plot_async
+        self.count      = 0
+        # cache mesh arrays for pickling into worker processes
+        self._vertices  = loss_fn.grid.vertices.copy()
+        self._faces     = loss_fn.grid.faces.copy()
+        self._t_grid    = loss_fn.t_grid.numpy().copy()
+        self._procs     = []   # track live worker processes
         self.setFolder(folder)
 
     def setFolder(self, folder):
@@ -179,7 +239,7 @@ class ECGValidator:
             row = np.array([[mean_err, max_err]], dtype=np.float32)
             hf.create_dataset("error_stats", data=np.vstack([old, row]))
 
-        # Full snapshot
+        # Full snapshot + optional async plot
         if self.count % self.dump_f == 0:
             snap = f"{self.folder}/{self.name}_{self.count:06d}.h5"
             with h5py.File(snap, "w") as hf:
@@ -187,6 +247,16 @@ class ECGValidator:
                 hf.create_dataset("phi_true", data=phi_true_np.astype(np.float32))
                 hf.create_dataset("V_pred",   data=V_pred.numpy().astype(np.float32))
                 hf.create_dataset("V_meas",   data=self.loss_fn.V_meas.numpy().astype(np.float32))
+
+            if self.plot_async:
+                it_dir = os.path.join(self.folder, f'it_{self.count:06d}')
+                p = mp.Process(
+                    target=_plot_snapshot_worker,
+                    args=(snap, self._vertices, self._faces, self._t_grid, it_dir),
+                    daemon=True,
+                )
+                p.start()
+                self._procs.append(p)
 
         self.count += 1
         return mean_err
