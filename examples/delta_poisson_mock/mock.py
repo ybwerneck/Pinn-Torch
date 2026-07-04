@@ -13,43 +13,40 @@ import torch
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-from fisiocomPinn import Grid, structured_mesh, EigenDirectionNet
+from fisiocomPinn import Grid, annular_mesh, EigenDirectionNet
 from fisiocomPinn.Trainer import Trainer
 from visualizer import Visualizer
-from ground_truth import (make_phi_true, make_phi_true_multisource,
-                          make_t_grid, make_electrodes,
-                          precompute_lead_gradients, ecg_forward)
+from ground_truth import (make_phi_true_annular, make_t_grid,
+                          make_electrodes, precompute_lead_gradients,
+                          ecg_forward)
 from ecg_loss import ECGLoss, ECGValidator
 
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
-N_SIDE      = 33
-N_EIG       = 16
+N_R         = 20       # radial layers
+N_THETA     = 60       # nodes per ring
+N_EIG       = 20       # more eigenfunctions for curved geometry
 N_LAYERS    = 5
 WIDTH       = 64
 N_ITER      = 500
 LR          = 1e-3
-VAL_FREQ    = 50       # validate every VAL_FREQ iterations
-DUMP_FREQ   = 1        # snapshot every DUMP_FREQ validation calls
+VAL_FREQ    = 50
+DUMP_FREQ   = 1
 OUT_DIR     = os.path.join('runs', datetime.now().strftime('%Y%m%d_%H%M%S'))
 
-# Multi-source isotropic: four corners of [0, L]^2
-L       = 2.0
-MARGIN  = 0.05          # inset so sources sit just inside the boundary
-STIMS   = [
-    (MARGIN,     MARGIN),
-    (L - MARGIN, MARGIN),
-    (MARGIN,     L - MARGIN),
-    (L - MARGIN, L - MARGIN),
-]
+# Annular domain: inner boundary = stimulus
+CENTER  = (0.0, 0.0)
+INNER_R = 0.4
+OUTER_R = 1.0
+ELEC_L  = 2 * OUTER_R   # bounding box side for electrode placement
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------
 # 1. Mesh + visualiser
 # ------------------------------------------------------------------
-vertices, faces = structured_mesh(n=N_SIDE, L=L)
+vertices, faces = annular_mesh(N_R, N_THETA, INNER_R, OUTER_R, center=CENTER)
 grid = Grid(vertices, faces)
 viz  = Visualizer(grid)
 print(f"Mesh: {grid.N} nodes, {len(grid.faces)} triangles")
@@ -65,9 +62,11 @@ print(f"Done. Shape: {eig_vecs.shape}")
 # ------------------------------------------------------------------
 # 3. Ground truth activation map + ECG
 # ------------------------------------------------------------------
-phi_true   = make_phi_true_multisource(vertices, STIMS)
+phi_true   = make_phi_true_annular(vertices, CENTER, INNER_R)
 t_grid_np  = make_t_grid(phi_true, Nt=100)
-electrodes = make_electrodes(L=L, h=0.3, n_elec=9)
+# electrodes above the annulus, centred on CENTER
+electrodes = make_electrodes(L=ELEC_L, h=0.3, n_elec=9)
+electrodes[:, :2] -= OUTER_R   # shift so [0,2r]^2 -> [-r,r]^2
 grad_Z_np  = precompute_lead_gradients(grid, electrodes)
 V_meas_np  = ecg_forward(phi_true, grid, grad_Z_np, t_grid_np)
 

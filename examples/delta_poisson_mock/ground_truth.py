@@ -77,6 +77,71 @@ def make_phi_true_multisource(vertices, stim_points, D=None):
     return phi
 
 
+def make_phi_true_ring(vertices, center, radius, D=None):
+    """
+    Exact activation map for a circular ring source.
+
+    The ring fires simultaneously at t=0; the wavefront travels both
+    inward and outward.  For the isotropic eikonal the exact solution is
+    the distance from each node to the nearest point on the ring:
+
+        φ(x) = | ‖x − center‖ − radius |
+
+    For anisotropic constant D the Riemannian distance replaces the
+    Euclidean norm (same Cholesky trick as make_phi_true).
+
+    Parameters
+    ----------
+    vertices : (N, 2) array
+    center   : (2,)   array-like — ring centre
+    radius   : float
+    D        : (2, 2) array or None
+
+    Returns
+    -------
+    phi : (N,) array, gauge-fixed so phi.min() = 0
+    """
+    center = np.array(center, dtype=np.float64)
+    diff   = vertices - center                          # (N, 2)
+
+    if D is None:
+        dist = np.linalg.norm(diff, axis=1)
+    else:
+        D_ = np.array(D, dtype=np.float64)
+        L  = np.linalg.cholesky(D_)
+        dist = np.linalg.norm(np.linalg.solve(L, diff.T).T, axis=1)
+
+    phi = np.abs(dist - radius)
+    phi -= phi.min()
+    return phi
+
+
+def make_phi_true_annular(vertices, center, inner_r):
+    """
+    Exact activation map on an annular domain with the inner boundary
+    as the stimulus (fires simultaneously at t=0).
+
+    The wavefront travels outward; the isotropic eikonal solution is
+    simply the radial distance from the inner circle:
+
+        φ(x) = ‖x − center‖ − inner_r
+
+    Parameters
+    ----------
+    vertices : (N, 2) array — mesh node coordinates
+    center   : (2,)   array-like
+    inner_r  : float  — inner radius
+
+    Returns
+    -------
+    phi : (N,) array, gauge-fixed so phi.min() = 0
+    """
+    center = np.array(center, dtype=np.float64)
+    phi    = np.linalg.norm(vertices - center, axis=1) - inner_r
+    phi   -= phi.min()
+    return phi
+
+
 def make_t_grid(phi_true, Nt=100, margin=1.2):
     """
     Time grid that covers the full activation range.
