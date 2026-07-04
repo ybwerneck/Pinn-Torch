@@ -16,16 +16,15 @@ from datetime import datetime
 from fisiocomPinn import Grid, structured_mesh, EigenDirectionNet
 from fisiocomPinn.Trainer import Trainer
 from visualizer import Visualizer
-from ground_truth import (make_phi_true, make_t_grid,
-                          make_electrodes, precompute_lead_gradients,
-                          ecg_forward)
+from ground_truth import (make_phi_true, make_phi_true_multisource,
+                          make_t_grid, make_electrodes,
+                          precompute_lead_gradients, ecg_forward)
 from ecg_loss import ECGLoss, ECGValidator
 
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
 N_SIDE      = 33
-L           = 1.0
 N_EIG       = 16
 N_LAYERS    = 5
 WIDTH       = 64
@@ -35,9 +34,15 @@ VAL_FREQ    = 50       # validate every VAL_FREQ iterations
 DUMP_FREQ   = 1        # snapshot every DUMP_FREQ validation calls
 OUT_DIR     = os.path.join('runs', datetime.now().strftime('%Y%m%d_%H%M%S'))
 
-STIM    = (0.05, 0.05)
-D_ANISO = np.array([[3.0, 0.5],
-                    [0.5, 1.0]])
+# Multi-source isotropic: four corners of [0, L]^2
+L       = 2.0
+MARGIN  = 0.05          # inset so sources sit just inside the boundary
+STIMS   = [
+    (MARGIN,     MARGIN),
+    (L - MARGIN, MARGIN),
+    (MARGIN,     L - MARGIN),
+    (L - MARGIN, L - MARGIN),
+]
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -60,7 +65,7 @@ print(f"Done. Shape: {eig_vecs.shape}")
 # ------------------------------------------------------------------
 # 3. Ground truth activation map + ECG
 # ------------------------------------------------------------------
-phi_true   = make_phi_true(vertices, STIM, D=D_ANISO)
+phi_true   = make_phi_true_multisource(vertices, STIMS)
 t_grid_np  = make_t_grid(phi_true, Nt=100)
 electrodes = make_electrodes(L=L, h=0.3, n_elec=9)
 grad_Z_np  = precompute_lead_gradients(grid, electrodes)
@@ -78,7 +83,7 @@ loss_fn = ECGLoss(
     grad_Z   = grad_Z_np,
     t_grid   = t_grid_np,
     V_meas   = V_meas_np,
-    D        = D_ANISO,
+    D        = None,    # isotropic
 )
 
 model = EigenDirectionNet(Ne=N_EIG, n_layers=N_LAYERS, width=WIDTH)

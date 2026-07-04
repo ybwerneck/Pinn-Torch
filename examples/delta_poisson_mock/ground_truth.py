@@ -44,6 +44,39 @@ def make_phi_true(vertices, stim_point, D=None):
     return phi
 
 
+def make_phi_true_multisource(vertices, stim_points, D=None):
+    """
+    Exact activation map for simultaneous point stimuli.
+
+    Each source fires at t=0; the wavefront from source s reaches node x
+    at time φ_s(x) = Riemannian distance(x, s).  The activation time is
+    the earliest arrival:
+
+        φ(x) = min_s  φ_s(x)
+
+    isotropic  (D=None) → min Euclidean distance to any source.
+    anisotropic (constant D) → min elliptic distance.
+
+    Parameters
+    ----------
+    vertices    : (N, 2) array
+    stim_points : list of (2,) array-likes — source locations
+    D           : (2, 2) array or None
+
+    Returns
+    -------
+    phi : (N,) array, gauge-fixed so phi.min() = 0
+    """
+    phi_per_source = []
+    for stim in stim_points:
+        phi_per_source.append(make_phi_true(vertices, stim, D=D))
+    # undo per-source gauge fix before taking the min
+    # (make_phi_true already subtracts its own min which is 0 at the source)
+    phi = np.min(np.stack(phi_per_source, axis=1), axis=1)
+    phi -= phi.min()
+    return phi
+
+
 def make_t_grid(phi_true, Nt=100, margin=1.2):
     """
     Time grid that covers the full activation range.
