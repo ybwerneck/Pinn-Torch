@@ -125,7 +125,7 @@ class Visualizer:
         fig, axes = plt.subplots(1, 3, figsize=figsize)
 
         # Left: phi
-        self.plot_field(phi, title='φ (activation time)', ax=axes[0], cmap='hot')
+        self.plot_field(phi, title='φ (activation time)', ax=axes[0])
         if electrodes is not None:
             axes[0].scatter(electrodes[:, 0], electrodes[:, 1],
                             c='cyan', s=40, zorder=5, label='electrodes')
@@ -212,8 +212,8 @@ class Visualizer:
 
         fig, axes = plt.subplots(1, 4, figsize=figsize)
 
-        self.plot_field(phi_true,                   title='φ true',  ax=axes[0], cmap='hot')
-        self.plot_field(phi_hat,                    title='φ pred',  ax=axes[1], cmap='hot')
+        self.plot_field(phi_true,                   title='φ true',  ax=axes[0])
+        self.plot_field(phi_hat,                    title='φ pred',  ax=axes[1])
         self.plot_field(np.abs(phi_hat - phi_true), title='|error|', ax=axes[2], cmap='Reds')
 
         ax = axes[3]

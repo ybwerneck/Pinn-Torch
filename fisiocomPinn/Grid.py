@@ -203,9 +203,9 @@ class Grid:
 
         if isinstance(q, torch.Tensor):
             dev  = q.device
-            f0t  = torch.tensor(f[:, 0], device=dev)
-            f1t  = torch.tensor(f[:, 1], device=dev)
-            f2t  = torch.tensor(f[:, 2], device=dev)
+            f0t  = torch.tensor(f[:, 0], dtype=torch.long, device=dev)
+            f1t  = torch.tensor(f[:, 1], dtype=torch.long, device=dev)
+            f2t  = torch.tensor(f[:, 2], dtype=torch.long, device=dev)
             At   = torch.tensor(self._areas, dtype=q.dtype, device=dev)
             Gt   = torch.tensor(self._grads, dtype=q.dtype, device=dev)
 

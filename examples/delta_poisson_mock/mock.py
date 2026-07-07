@@ -1,7 +1,10 @@
 """
-Delta-PoIssoNN mock on [0,1]^2.
-Learns the anisotropic activation map from ECG leads using a PINN
-on Laplace-Beltrami eigenfunctions.
+Delta-PoIssoNN mock — non-identifiability case.
+
+Source at (0.05, 0.25) and its y-reflection (0.05, 0.75) are
+indistinguishable when electrodes lie on the y=0.5 symmetry axis.
+The PINN has two equally valid solutions; which one it finds depends
+on the random seed.
 """
 
 import sys
@@ -13,40 +16,36 @@ import torch
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-from fisiocomPinn import Grid, annular_mesh, EigenDirectionNet
+from fisiocomPinn import Grid, structured_mesh, EigenDirectionNet
 from fisiocomPinn.Trainer import Trainer
 from visualizer import Visualizer
-from ground_truth import (make_phi_true_annular, make_t_grid,
-                          make_electrodes, precompute_lead_gradients,
-                          ecg_forward)
+from ground_truth import (make_phi_true, make_t_grid,
+                          precompute_lead_gradients, ecg_forward)
 from ecg_loss import ECGLoss, ECGValidator
 
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
-N_R         = 20       # radial layers
-N_THETA     = 60       # nodes per ring
-N_EIG       = 20       # more eigenfunctions for curved geometry
-N_LAYERS    = 5
-WIDTH       = 64
-N_ITER      = 500
-LR          = 1e-3
-VAL_FREQ    = 50
-DUMP_FREQ   = 1
-OUT_DIR     = os.path.join('runs', datetime.now().strftime('%Y%m%d_%H%M%S'))
+N         = 33
+N_EIG     = 100
+N_LAYERS  = 12
+WIDTH     = 128
+N_ITER    = 1000
+LR        = 5e-4
+VAL_FREQ  = 200
+DUMP_FREQ = 1
+ELEC_H    = 0.05
+OUT_DIR   = os.path.join('runs', datetime.now().strftime('%Y%m%d_%H%M%S'))
 
-# Annular domain: inner boundary = stimulus
-CENTER  = (0.0, 0.0)
-INNER_R = 0.4
-OUTER_R = 1.0
-ELEC_L  = 2 * OUTER_R   # bounding box side for electrode placement
+STIM_A = (0.05, 0.25)           # primary source
+STIM_B = (0.05, 0.75)           # y-reflected source — same ECG
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------
 # 1. Mesh + visualiser
 # ------------------------------------------------------------------
-vertices, faces = annular_mesh(N_R, N_THETA, INNER_R, OUTER_R, center=CENTER)
+vertices, faces = structured_mesh(n=N, L=1.0)
 grid = Grid(vertices, faces)
 viz  = Visualizer(grid)
 print(f"Mesh: {grid.N} nodes, {len(grid.faces)} triangles")
@@ -60,18 +59,35 @@ eig_vecs = torch.tensor(eig_np, dtype=torch.float32)
 print(f"Done. Shape: {eig_vecs.shape}")
 
 # ------------------------------------------------------------------
-# 3. Ground truth activation map + ECG
+# 3. Ground truth — both sources via eikonal
 # ------------------------------------------------------------------
-phi_true   = make_phi_true_annular(vertices, CENTER, INNER_R)
-t_grid_np  = make_t_grid(phi_true, Nt=100)
-# electrodes above the annulus, centred on CENTER
-electrodes = make_electrodes(L=ELEC_L, h=0.3, n_elec=9)
-electrodes[:, :2] -= OUTER_R   # shift so [0,2r]^2 -> [-r,r]^2
-grad_Z_np  = precompute_lead_gradients(grid, electrodes)
-V_meas_np  = ecg_forward(phi_true, grid, grad_Z_np, t_grid_np)
+phi_A = make_phi_true(vertices, stim_point=STIM_A)
+phi_B = make_phi_true(vertices, stim_point=STIM_B)
+t_grid_np = make_t_grid(phi_A, Nt=100)
 
-print(f"phi_true range: {phi_true.min():.3f} – {phi_true.max():.3f}")
-print(f"V_meas   shape={V_meas_np.shape}  range={V_meas_np.min():.3f} – {V_meas_np.max():.3f}")
+# Electrodes: 5-point line along y=0.5 (the symmetry axis)
+electrodes = np.array([
+    [0.10, 0.5, ELEC_H],
+    [0.30, 0.5, ELEC_H],
+    [0.50, 0.5, ELEC_H],
+    [0.70, 0.5, ELEC_H],
+    [0.90, 0.5, ELEC_H],
+])
+grad_Z_np = precompute_lead_gradients(grid, electrodes)
+
+V_A = ecg_forward(phi_A, grid, grad_Z_np, t_grid_np)
+V_B = ecg_forward(phi_B, grid, grad_Z_np, t_grid_np)
+
+# Verify non-identifiability: V_A and V_B should be (near-)identical
+max_diff = np.max(np.abs(V_A - V_B))
+print(f"\n--- Non-identifiability check ---")
+print(f"  max |V_A - V_B| = {max_diff:.2e}  (should be ~0)")
+print(f"  phi_A range: {phi_A.min():.3f} – {phi_A.max():.3f}")
+print(f"  phi_B range: {phi_B.min():.3f} – {phi_B.max():.3f}")
+print(f"---------------------------------\n")
+
+# Train on V_A; the PINN can converge to phi_A or phi_B
+V_meas_np = V_A
 
 # ------------------------------------------------------------------
 # 4. Loss, model, validator
@@ -82,7 +98,7 @@ loss_fn = ECGLoss(
     grad_Z   = grad_Z_np,
     t_grid   = t_grid_np,
     V_meas   = V_meas_np,
-    D        = None,    # isotropic
+    D        = None,
 )
 
 model = EigenDirectionNet(Ne=N_EIG, n_layers=N_LAYERS, width=WIDTH)
@@ -90,14 +106,14 @@ print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
 
 validator = ECGValidator(
     loss_fn  = loss_fn,
-    phi_true = phi_true,
+    phi_true = phi_A,          # ground truth we'll compare against
     folder   = OUT_DIR,
     name     = 'ecg_val',
     dump_f   = DUMP_FREQ,
 )
 
 # ------------------------------------------------------------------
-# 5. Train with Trainer
+# 5. Train
 # ------------------------------------------------------------------
 trainer = Trainer(
     n_epochs    = N_ITER,
@@ -114,8 +130,6 @@ model, loss_dict = trainer.train()
 # ------------------------------------------------------------------
 # 6. Plots
 # ------------------------------------------------------------------
-
-# Loss curve from Trainer dict
 history = loss_dict[loss_fn.name]
 fig_loss, ax_l = plt.subplots(figsize=(6, 3))
 ax_l.semilogy(history)
@@ -126,18 +140,35 @@ fig_loss.tight_layout()
 fig_loss.savefig(f'{OUT_DIR}/loss_curve.png', dpi=120)
 print("Saved loss_curve.png")
 
-# Validation error from HDF5
+# Summary: phi_A, phi_B, and what the network found
+with torch.no_grad():
+    p_hat   = model(eig_vecs)
+    q_hat   = loss_fn._apply_conductivity(p_hat)
+    b_hat   = loss_fn.grid.assemble_rhs(q_hat.double())
+    phi_hat = loss_fn.grid.solve_poisson(b_hat).float().numpy()
+    phi_hat -= phi_hat.min()
+
+err_A = np.mean(np.abs(phi_hat - phi_A))
+err_B = np.mean(np.abs(phi_hat - phi_B))
+print(f"\nFinal mean error vs phi_A: {err_A:.4f}")
+print(f"Final mean error vs phi_B: {err_B:.4f}")
+print(f"Network converged to: {'phi_A' if err_A < err_B else 'phi_B'}")
+
+fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+for ax, field, title in [
+    (axes[0], phi_A,   f'phi_A  (source {STIM_A})'),
+    (axes[1], phi_B,   f'phi_B  (source {STIM_B})'),
+    (axes[2], phi_hat, 'phi_hat (network output)'),
+]:
+    viz.plot_field(field, title=title, ax=ax, cmap='hot')
+for xe, ye, _ in electrodes:
+    for ax in axes:
+        ax.plot(xe, ye, 'cv', ms=7, markeredgecolor='k')
+fig.tight_layout()
+fig.savefig(f'{OUT_DIR}/non_identifiability.png', dpi=120)
+print("Saved non_identifiability.png")
+
 fig_err = Visualizer.plot_err_h5(f'{OUT_DIR}/ecg_val_err.h5')
 fig_err.savefig(f'{OUT_DIR}/val_error.png', dpi=120)
-print("Saved val_error.png")
-
-# Final snapshot comparison (last dump)
-last_snap = sorted(
-    [f for f in os.listdir(OUT_DIR) if f.startswith('ecg_val_') and f.endswith('.h5') and 'err' not in f]
-)[-1]
-fig_snap = viz.plot_from_h5(f'{OUT_DIR}/{last_snap}', t_grid_np, n_leads_shown=9)
-fig_snap.suptitle(f'Final validation: {last_snap}', y=1.01)
-fig_snap.savefig(f'{OUT_DIR}/final_comparison.png', dpi=120)
-print(f"Saved final_comparison.png  (from {last_snap})")
 
 plt.show()

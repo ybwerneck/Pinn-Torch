@@ -77,6 +77,43 @@ def make_phi_true_multisource(vertices, stim_points, D=None):
     return phi
 
 
+def make_phi_true_wall(vertices, wall, L=1.0, n_samples=200, D=None):
+    """
+    Exact activation map for an entire wall firing at t=0.
+
+    Approximates the wall as n_samples dense point sources and takes the
+    minimum Riemannian distance — converges to the exact eikonal for any D.
+
+    For isotropic D=None on a straight wall this is effectively exact:
+        left/right → φ = x or 1-x
+        bottom/top → φ = y or 1-y
+
+    Parameters
+    ----------
+    vertices  : (N, 2) array
+    wall      : 'left' | 'right' | 'bottom' | 'top'
+    L         : float — domain side length (default 1.0)
+    n_samples : int   — number of source points along the wall
+    D         : (2, 2) array or None
+
+    Returns
+    -------
+    phi : (N,) array, gauge-fixed so phi.min() = 0
+    """
+    s = np.linspace(0.0, L, n_samples)
+    if wall == 'left':
+        points = [(0.0, si) for si in s]
+    elif wall == 'right':
+        points = [(L,   si) for si in s]
+    elif wall == 'bottom':
+        points = [(si, 0.0) for si in s]
+    elif wall == 'top':
+        points = [(si, L  ) for si in s]
+    else:
+        raise ValueError(f"wall must be 'left','right','bottom','top', got {wall!r}")
+    return make_phi_true_multisource(vertices, points, D=D)
+
+
 def make_phi_true_ring(vertices, center, radius, D=None):
     """
     Exact activation map for a circular ring source.
@@ -139,6 +176,89 @@ def make_phi_true_annular(vertices, center, inner_r):
     center = np.array(center, dtype=np.float64)
     phi    = np.linalg.norm(vertices - center, axis=1) - inner_r
     phi   -= phi.min()
+    return phi
+
+
+def wall_nodes(vertices, wall, L=1.0, tol=1e-10):
+    """
+    Return indices of all mesh nodes lying on a boundary wall.
+
+    Parameters
+    ----------
+    vertices : (N, 2) array
+    wall     : 'left' | 'right' | 'bottom' | 'top'
+    L        : float — domain side length
+    tol      : float — snap tolerance
+
+    Returns
+    -------
+    list of int
+    """
+    x, y = vertices[:, 0], vertices[:, 1]
+    if wall == 'left':
+        mask = x < tol
+    elif wall == 'right':
+        mask = x > L - tol
+    elif wall == 'bottom':
+        mask = y < tol
+    elif wall == 'top':
+        mask = y > L - tol
+    else:
+        raise ValueError(f"wall must be 'left','right','bottom','top', got {wall!r}")
+    return list(np.where(mask)[0])
+
+
+def nearest_nodes(vertices, points):
+    """Return the index of the mesh node closest to each point."""
+    return [int(np.argmin(np.linalg.norm(vertices - np.array(p), axis=1)))
+            for p in points]
+
+
+def mesh_geodesic_eikonal(grid, source_nodes):
+    """
+    Isotropic eikonal on the mesh via Dijkstra shortest paths.
+
+    Uses Euclidean edge lengths as the metric — the wavefront respects
+    mesh topology and cannot cross holes or leave the domain.
+
+    For a uniform fine mesh this converges to the true geodesic distance;
+    it is exact for flat domains and a good approximation on curved ones.
+
+    Parameters
+    ----------
+    grid         : Grid
+    source_nodes : list of int — node indices where φ = 0
+
+    Returns
+    -------
+    phi : (N,) array, gauge-fixed so phi.min() = 0
+    """
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import dijkstra
+
+    v, f = grid.vertices, grid.faces
+    N    = grid.N
+
+    # Undirected weighted adjacency (weight = Euclidean edge length).
+    # Deduplicate shared edges before building the matrix — csr_matrix sums
+    # duplicate entries, which would double the weight of interior edges.
+    edge_dict = {}
+    for tri in f:
+        for i, j in [(0, 1), (1, 2), (0, 2)]:
+            a, b = tri[i], tri[j]
+            key = (min(a, b), max(a, b))
+            if key not in edge_dict:
+                edge_dict[key] = np.linalg.norm(v[a] - v[b])
+
+    rows, cols, vals = [], [], []
+    for (a, b), d in edge_dict.items():
+        rows += [a, b]
+        cols += [b, a]
+        vals += [d, d]
+
+    graph = sp.csr_matrix((vals, (rows, cols)), shape=(N, N))
+    phi   = dijkstra(graph, indices=source_nodes, min_only=True)
+    phi  -= phi.min()
     return phi
 
 
@@ -262,9 +382,10 @@ def ecg_forward(phi, grid, grad_Z, t_grid, G_in=1.0, V0=-80.0, V1=20.0):
 if __name__ == '__main__':
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     import matplotlib.pyplot as plt
-    from fisiocomPinn import Grid, structured_mesh
+    from fisiocomPinn import Grid, structured_mesh,annular_mesh
     from visualizer import Visualizer
 
+    
     # Mesh
     vertices, faces = structured_mesh(n=33, L=1.0)
     grid = Grid(vertices, faces)

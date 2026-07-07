@@ -241,7 +241,9 @@ class ECGValidator:
 
         # Full snapshot + optional async plot
         if self.count % self.dump_f == 0:
-            snap = f"{self.folder}/{self.name}_{self.count:06d}.h5"
+            it_dir = os.path.join(self.folder, f'it_{self.count:06d}')
+            os.makedirs(it_dir, exist_ok=True)
+            snap = os.path.join(it_dir, f'{self.name}_{self.count:06d}.h5')
             with h5py.File(snap, "w") as hf:
                 hf.create_dataset("phi_hat",  data=phi_hat_np.astype(np.float32))
                 hf.create_dataset("phi_true", data=phi_true_np.astype(np.float32))
@@ -249,7 +251,6 @@ class ECGValidator:
                 hf.create_dataset("V_meas",   data=self.loss_fn.V_meas.numpy().astype(np.float32))
 
             if self.plot_async:
-                it_dir = os.path.join(self.folder, f'it_{self.count:06d}')
                 p = mp.Process(
                     target=_plot_snapshot_worker,
                     args=(snap, self._vertices, self._faces, self._t_grid, it_dir),
@@ -263,88 +264,79 @@ class ECGValidator:
 
 
 # ------------------------------------------------------------------
-# Standalone: round-trip verification + ground truth ECG plot
+# Standalone: analytical eikonal ground truth + 3 symmetric leads
 # ------------------------------------------------------------------
 
 if __name__ == '__main__':
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     import matplotlib.pyplot as plt
-    from fisiocomPinn import Grid, structured_mesh, EigenDirectionNet
+    from fisiocomPinn import Grid, structured_mesh
     from visualizer import Visualizer
-    from ground_truth import (make_phi_true, make_t_grid,
-                              make_electrodes, precompute_lead_gradients,
-                              ecg_forward)
+    from ground_truth import (wall_nodes, nearest_nodes, mesh_geodesic_eikonal,
+                              make_t_grid, make_electrodes,
+                              precompute_lead_gradients, ecg_forward)
 
     # ------------------------------------------------------------------
-    # Setup
+    # Config
     # ------------------------------------------------------------------
-    N_SIDE  = 33
-    D_ANISO = np.array([[3.0, 0.5], [0.5, 1.0]])
-    STIM    = (0.05, 0.05)
+    WALL   = None
+    STIM   = (0.05, 0.05)
+    ELEC_H = 1
 
-    vertices, faces = structured_mesh(n=N_SIDE, L=1.0)
+    # ------------------------------------------------------------------
+    # Mesh
+    # ------------------------------------------------------------------
+    vertices, faces = structured_mesh(n=33, L=1.0)
     grid = Grid(vertices, faces)
     viz  = Visualizer(grid)
 
-    phi_true   = make_phi_true(vertices, STIM, D=D_ANISO)
-    t_grid_np  = make_t_grid(phi_true, Nt=100)
-    electrodes = make_electrodes(L=1.0, h=0.3, n_elec=9)
+    # ------------------------------------------------------------------
+    # Ground truth via eikonal (Dijkstra on mesh)
+    # ------------------------------------------------------------------
+    if WALL is not None:
+        source_nodes = wall_nodes(vertices, wall=WALL)
+    else:
+        source_nodes = nearest_nodes(vertices, [STIM])
+    phi_true  = mesh_geodesic_eikonal(grid, source_nodes)
+    t_grid_np = make_t_grid(phi_true, Nt=200)
+
+    # ------------------------------------------------------------------
+    # 9 leads on a 3x3 grid
+    # ------------------------------------------------------------------
+    electrodes = make_electrodes(L=1.0, h=ELEC_H, n_elec=9)
     grad_Z_np  = precompute_lead_gradients(grid, electrodes)
     V_meas_np  = ecg_forward(phi_true, grid, grad_Z_np, t_grid_np)
 
-    # ------------------------------------------------------------------
-    # Round-trip: phi_true -> p_true -> q_true -> Poisson -> phi_recon
-    # ------------------------------------------------------------------
-    # Step 1: gradient of phi_true per triangle (forward direction)
-    grad_phi_np = grid.gradient(phi_true)                    # (F, 2)
-
-    # Step 2: map to nodes (average adjacent triangles)
-    p_nodes = np.zeros((grid.N, 2))
-    count   = np.zeros(grid.N)
-    for k in range(3):
-        np.add.at(p_nodes, grid.faces[:, k], grad_phi_np)
-        np.add.at(count,   grid.faces[:, k], 1)
-    p_nodes /= count[:, None]
-
-    # Step 3: normalize -> unit direction p_true
-    p_norms = np.linalg.norm(p_nodes, axis=1, keepdims=True)
-    p_true  = p_nodes / (p_norms + 1e-8)
-
-    # Step 4: apply conductivity correction -> q = p / ||Up||
-    L_chol  = np.linalg.cholesky(D_ANISO)
-    U_np    = L_chol.T                                       # upper triangular
-    Up      = (U_np @ p_true.T).T                           # (N, 2)
-    Up_norm = np.linalg.norm(Up, axis=1, keepdims=True)
-    q_true  = p_true / (Up_norm + 1e-8)                    # should ≈ grad_phi
-
-    # Step 5: run through the differentiable Poisson solver (torch)
-    q_t   = torch.tensor(q_true, dtype=torch.float64)
-    b_t   = grid.assemble_rhs(q_t)
-    phi_t = grid.solve_poisson(b_t)
-    phi_recon = phi_t.numpy()
-    phi_recon -= phi_recon.min()                             # gauge align
-
-    error = np.mean(np.abs(phi_recon - phi_true))
-    print(f"Round-trip error (mean |phi_recon - phi_true|): {error:.5f}")
-    print(f"phi_true  range: {phi_true.min():.3f} – {phi_true.max():.3f}")
-    print(f"phi_recon range: {phi_recon.min():.3f} – {phi_recon.max():.3f}")
+    print(f"phi_true range : {phi_true.min():.3f} – {phi_true.max():.3f}")
+    print(f"V_meas   shape : {V_meas_np.shape}")
 
     # ------------------------------------------------------------------
-    # Plot: round-trip comparison + ECG
+    # Plot
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 4, figsize=(18, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    viz.plot_field(phi_true,  title='phi_true',      ax=axes[0], cmap='hot')
-    viz.plot_field(phi_recon, title='phi_recon',     ax=axes[1], cmap='hot')
-    viz.plot_field(np.abs(phi_recon - phi_true),
-                   title='|error|', ax=axes[2], cmap='Reds')
+    # Left: activation map + electrode positions
+    ax = axes[0]
+    viz.plot_field(phi_true, title='phi_true + electrodes', ax=ax, cmap='hot')
+    ax.plot(STIM[0], STIM[1], 'w*', ms=12, markeredgecolor='k', label='source')
+    for k, (xe, ye, _) in enumerate(electrodes):
+        ax.plot(xe, ye, 'cv', ms=8, markeredgecolor='k')
+        ax.text(xe + 0.02, ye + 0.02, str(k), fontsize=7, color='cyan')
+    ax.legend(fontsize=8)
 
-    ax = axes[3]
-    for i in range(len(V_meas_np)):
-        ax.plot(t_grid_np, V_meas_np[i], linewidth=1.0, label=f'L{i}')
-    ax.set_title('ECG leads (ground truth)')
+    # Right: 9 ECG leads
+    ax = axes[1]
+    cmap9 = plt.cm.tab10
+    for i in range(9):
+        xe, ye, _ = electrodes[i]
+        c = cmap9(i / 9)
+        ax.plot(t_grid_np, V_meas_np[i], color=c, linewidth=1.2,
+                label=f'L{i} ({xe:.2f},{ye:.2f})')
+    ax.axhline(0, color='k', linewidth=0.6, linestyle='--')
     ax.set_xlabel('t')
-    ax.legend(fontsize=6, ncol=2)
+    ax.set_ylabel('V (a.u.)')
+    ax.set_title('ECG leads')
+    ax.legend(fontsize=7, ncol=2)
 
     fig.tight_layout()
     fig.savefig('ecg_loss_verification.png', dpi=120)
