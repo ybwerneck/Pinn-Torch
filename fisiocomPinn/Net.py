@@ -63,6 +63,40 @@ class EigenDirectionNet(FullyConnectedNetwork):
         return p_raw / (norm + self.eps)                  # (n_nodes, 2) unit vectors
 
 
+class EnsembleNet(nn.Module):
+    """
+    M independently initialised EigenDirectionNets trained in parallel.
+
+    forward(x) returns (M, N_nodes, 2) — stacked outputs from all members.
+    Because members share no parameters, each member's gradient comes only
+    from its own loss component; training is equivalent to M independent runs.
+
+    Parameters
+    ----------
+    M        : int — number of ensemble members
+    Ne       : int — eigenfunctions (input dimension)
+    n_layers : int
+    width    : int
+    **kwargs : forwarded to EigenDirectionNet (eps, dtype, …)
+    """
+
+    def __init__(self, M, Ne, n_layers, width, **kwargs):
+        super().__init__()
+        self.members = nn.ModuleList([
+            EigenDirectionNet(Ne, n_layers, width, **kwargs)
+            for _ in range(M)
+        ])
+
+    def __len__(self):
+        return len(self.members)
+
+    def __getitem__(self, i):
+        return self.members[i]
+
+    def forward(self, x):
+        return torch.stack([m(x) for m in self.members], dim=0)  # (M, N, 2)
+
+
 activation_map = {
     "Elu": nn.ELU,
     "LeakyReLU": nn.LeakyReLU,

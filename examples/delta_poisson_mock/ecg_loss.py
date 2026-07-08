@@ -106,15 +106,28 @@ class ECGLoss:
     def forward(self, model):
         """
         Trainer-compatible: returns scalar loss tensor.
+        Handles both single model (N,2) and EnsembleNet (M,N,2) output.
         """
-        p     = model(self.eig_vecs)                        # (N, 2)
-        q     = self._apply_conductivity(p)
-        b     = self.grid.assemble_rhs(q.double())
-        phi   = self.grid.solve_poisson(b).to(q.dtype)
-        V_pred = self._ecg_forward(phi)
+        p = model(self.eig_vecs)
 
-        residual = (self.V_meas - V_pred) / self.norm_per_lead
-        return residual.pow(2).mean()
+        if p.dim() == 3:                                    # ensemble (M, N, 2)
+            total = torch.zeros(1, dtype=p.dtype, device=p.device)
+            for pi in p:
+                qi  = self._apply_conductivity(pi)
+                bi  = self.grid.assemble_rhs(qi.double())
+                phi_i = self.grid.solve_poisson(bi).to(qi.dtype)
+                V_i   = self._ecg_forward(phi_i)
+                res   = (self.V_meas - V_i) / self.norm_per_lead
+                total = total + res.pow(2).mean()
+            return total / p.shape[0]
+
+        else:                                               # single model (N, 2)
+            q     = self._apply_conductivity(p)
+            b     = self.grid.assemble_rhs(q.double())
+            phi   = self.grid.solve_poisson(b).to(q.dtype)
+            V_pred = self._ecg_forward(phi)
+            residual = (self.V_meas - V_pred) / self.norm_per_lead
+            return residual.pow(2).mean()
 
 
 # ------------------------------------------------------------------
@@ -122,7 +135,7 @@ class ECGLoss:
 # ------------------------------------------------------------------
 
 def _plot_snapshot_worker(h5_path, vertices, faces, t_grid, out_dir, n_leads=9):
-    """Reads one HDF5 snapshot and saves a comparison figure to out_dir."""
+    """Reads one HDF5 snapshot and saves comparison figure(s) to out_dir."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -131,19 +144,25 @@ def _plot_snapshot_worker(h5_path, vertices, faces, t_grid, out_dir, n_leads=9):
     os.makedirs(out_dir, exist_ok=True)
 
     with h5py.File(h5_path, 'r') as hf:
-        phi_hat  = np.array(hf['phi_hat'])
-        phi_true = np.array(hf['phi_true'])
-        V_pred   = np.array(hf['V_pred'])
-        V_meas   = np.array(hf['V_meas'])
+        ensemble  = 'phi_hats' in hf
+        phi_true  = np.array(hf['phi_true'])
+        V_pred    = np.array(hf['V_pred'])
+        V_meas    = np.array(hf['V_meas'])
+        if ensemble:
+            phi_hats = np.array(hf['phi_hats'])   # (M, N)
+            phi_mean = np.array(hf['phi_hat'])     # ensemble mean
+        else:
+            phi_hat  = np.array(hf['phi_hat'])
 
     triang = tri.Triangulation(vertices[:, 0], vertices[:, 1], faces)
 
+    # ---- single-model or ensemble-mean comparison ----
     fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-
+    ph = phi_mean if ensemble else phi_hat
     for ax, field, title, cmap in [
-        (axes[0], phi_true,                   'φ true',  'hot'),
-        (axes[1], phi_hat,                    'φ pred',  'hot'),
-        (axes[2], np.abs(phi_hat - phi_true), '|error|', 'Reds'),
+        (axes[0], phi_true,               'φ true',  'hot'),
+        (axes[1], ph,                     'φ pred' + (' (mean)' if ensemble else ''), 'hot'),
+        (axes[2], np.abs(ph - phi_true),  '|error|', 'Reds'),
     ]:
         tc = ax.tripcolor(triang, field, shading='gouraud', cmap=cmap)
         plt.colorbar(tc, ax=ax)
@@ -166,6 +185,81 @@ def _plot_snapshot_worker(h5_path, vertices, faces, t_grid, out_dir, n_leads=9):
     plt.close(fig)
     print(f'[plot] saved {out_path}', flush=True)
 
+    # ---- per-member grid (ensemble only) ----
+    if ensemble:
+        with h5py.File(h5_path, 'r') as hf:
+            V_preds = np.array(hf['V_preds']) if 'V_preds' in hf else None  # (M, n_elec, Nt)
+
+        M    = phi_hats.shape[0]
+        nrows = 2 if V_preds is not None else 1
+        fig2, axes2 = plt.subplots(nrows, M,
+                                   figsize=(3.5 * M, 3.5 * nrows),
+                                   squeeze=False)
+        vmin = phi_hats.min(); vmax = phi_hats.max()
+        cmap_l = plt.cm.tab10
+        for i in range(M):
+            # top row: phi map
+            ax = axes2[0][i]
+            err = float(np.mean(np.abs(phi_hats[i] - phi_true)))
+            tc = ax.tripcolor(triang, phi_hats[i], shading='gouraud',
+                              cmap='hot', vmin=vmin, vmax=vmax)
+            plt.colorbar(tc, ax=ax, fraction=0.046, pad=0.04)
+            ax.set_aspect('equal')
+            ax.set_title(f'M{i}  err={err:.3f}')
+
+            # bottom row: ECG pred vs meas
+            if V_preds is not None:
+                ax2 = axes2[1][i]
+                for l in range(len(V_meas)):
+                    c = cmap_l(l / max(len(V_meas), 1))
+                    ax2.plot(t_grid, V_meas[l],    color=c, lw=1.0)
+                    ax2.plot(t_grid, V_preds[i, l], color=c, lw=1.0, ls='--')
+                ax2.set_xlabel('t', fontsize=8)
+                if i == 0:
+                    ax2.set_title('meas (—) pred (--)', fontsize=8)
+
+        fig2.suptitle('Ensemble members', fontsize=11)
+        fig2.tight_layout()
+        out2 = os.path.join(out_dir, 'members.png')
+        fig2.savefig(out2, dpi=120)
+        plt.close(fig2)
+        print(f'[plot] saved {out2}', flush=True)
+
+        # ---- per-node activation-time histogram ----
+        # phi_hats: (M, N) — M activation maps over N nodes
+        phi_std  = phi_hats.std(axis=0)          # (N,) uncertainty per node
+        phi_mean = phi_hats.mean(axis=0)         # (N,)
+
+        fig3, axes3 = plt.subplots(1, 3, figsize=(15, 4))
+
+        # Left: ensemble mean phi
+        ax = axes3[0]
+        tc = ax.tripcolor(triang, phi_mean, shading='gouraud', cmap='hot')
+        plt.colorbar(tc, ax=ax)
+        ax.set_aspect('equal')
+        ax.set_title('ensemble mean φ')
+
+        # Middle: std(phi) — where do members disagree?
+        ax = axes3[1]
+        tc = ax.tripcolor(triang, phi_std, shading='gouraud', cmap='plasma')
+        plt.colorbar(tc, ax=ax)
+        ax.set_aspect('equal')
+        ax.set_title('std(φ) across members')
+
+        # Right: histogram of all M×N phi values — should be bimodal
+        ax = axes3[2]
+        flat = phi_hats.ravel()
+        ax.hist(flat, bins=80, color='steelblue', edgecolor='none', alpha=0.8)
+        ax.set_xlabel('activation time  t_a')
+        ax.set_ylabel('count  (all nodes × members)')
+        ax.set_title('global t_a histogram')
+
+        fig3.tight_layout()
+        out3 = os.path.join(out_dir, 'uncertainty.png')
+        fig3.savefig(out3, dpi=120)
+        plt.close(fig3)
+        print(f'[plot] saved {out3}', flush=True)
+
 
 # ------------------------------------------------------------------
 # ECG Validator — Trainer-compatible, dumps phi / ECG to HDF5
@@ -178,7 +272,12 @@ class ECGValidator:
     Runs the full model → p → Poisson → φ → ECG pipeline under
     torch.no_grad(), compares φ_hat against φ_true, and appends
     error statistics to an HDF5 file.  Every `dump_f` calls it also
-    writes a full snapshot (φ_hat, φ_true, V_pred, V_meas).
+    writes a full snapshot.
+
+    For ensemble models (EnsembleNet, output shape (M,N,2)):
+      - saves per-member phi_hats as (M,N) in snapshot key 'phi_hats'
+      - saves ensemble mean in 'phi_hat'
+      - appends per-member [mean_err, max_err] as (1, M, 2) to 'member_errors'
 
     Interface mirrors fisiocomPinn.Validator so Trainer.add_validator()
     accepts it directly.
@@ -191,7 +290,6 @@ class ECGValidator:
     name       : str   — file name prefix
     dump_f     : int   — snapshot every dump_f validation calls (default 1)
     plot_async : bool  — spawn a background process to plot each snapshot
-                         into a subfolder it_XXXXXX/ (default True)
     """
 
     def __init__(self, loss_fn, phi_true, folder, name='ecg_val',
@@ -202,42 +300,70 @@ class ECGValidator:
         self.dump_f     = dump_f
         self.plot_async = plot_async
         self.count      = 0
-        # cache mesh arrays for pickling into worker processes
         self._vertices  = loss_fn.grid.vertices.copy()
         self._faces     = loss_fn.grid.faces.copy()
         self._t_grid    = loss_fn.t_grid.numpy().copy()
-        self._procs     = []   # track live worker processes
+        self._procs     = []
         self.setFolder(folder)
 
     def setFolder(self, folder):
         self.folder = folder
         os.makedirs(folder, exist_ok=True)
         with h5py.File(f"{folder}/{self.name}_err.h5", "w") as hf:
-            hf.create_dataset("error_stats", data=np.empty((0, 2), dtype=np.float32))
+            hf.create_dataset("error_stats",   data=np.empty((0, 2), dtype=np.float32))
+            hf.create_dataset("member_errors", data=np.empty((0, 0, 2), dtype=np.float32))
+
+    def _phi_from_p(self, p):
+        """Single member: (N,2) -> phi (N,) tensor."""
+        q = self.loss_fn._apply_conductivity(p)
+        b = self.loss_fn.grid.assemble_rhs(q.double())
+        return self.loss_fn.grid.solve_poisson(b).to(p.dtype)
 
     def val(self, model):
         was_training = model.training
         model.eval()
         with torch.no_grad():
-            p_hat   = model(self.loss_fn.eig_vecs)
-            q_hat   = self.loss_fn._apply_conductivity(p_hat)
-            b_hat   = self.loss_fn.grid.assemble_rhs(q_hat.double())
-            phi_hat = self.loss_fn.grid.solve_poisson(b_hat).to(p_hat.dtype)
-            V_pred  = self.loss_fn._ecg_forward(phi_hat)
+            p_hat    = model(self.loss_fn.eig_vecs)
+            ensemble = p_hat.dim() == 3          # (M, N, 2) vs (N, 2)
+            if ensemble:
+                phi_list  = [self._phi_from_p(pi) for pi in p_hat]
+                vpred_list = [self.loss_fn._ecg_forward(phi_i) for phi_i in phi_list]
+                phi_mean  = torch.stack(phi_list).mean(0)
+                V_pred    = torch.stack(vpred_list).mean(0)
+            else:
+                phi_mean = self._phi_from_p(p_hat)
+                V_pred   = self.loss_fn._ecg_forward(phi_mean)
         if was_training:
             model.train()
 
-        phi_hat_np  = phi_hat.numpy()
         phi_true_np = self.phi_true.numpy()
-        mean_err = float(np.mean(np.abs(phi_hat_np - phi_true_np)))
-        max_err  = float(np.max(np.abs(phi_hat_np - phi_true_np)))
+        phi_mean_np = phi_mean.numpy()
+        mean_err = float(np.mean(np.abs(phi_mean_np - phi_true_np)))
+        max_err  = float(np.max(np.abs(phi_mean_np - phi_true_np)))
 
-        # Append error row
+        # Per-member errors (ensemble only)
+        if ensemble:
+            phi_hats_np = np.stack([p.numpy() for p in phi_list])   # (M, N)
+            m_errs = np.array([[
+                float(np.mean(np.abs(phi_hats_np[i] - phi_true_np))),
+                float(np.max (np.abs(phi_hats_np[i] - phi_true_np))),
+            ] for i in range(len(phi_list))], dtype=np.float32)     # (M, 2)
+
+        # Append error stats
         with h5py.File(f"{self.folder}/{self.name}_err.h5", "a") as hf:
             old = np.array(hf["error_stats"])
             del hf["error_stats"]
-            row = np.array([[mean_err, max_err]], dtype=np.float32)
-            hf.create_dataset("error_stats", data=np.vstack([old, row]))
+            hf.create_dataset("error_stats",
+                              data=np.vstack([old, [[mean_err, max_err]]]).astype(np.float32))
+
+            if ensemble:
+                old_m = np.array(hf["member_errors"])    # (T, M, 2) or (0,0,2)
+                del hf["member_errors"]
+                new_row = m_errs[None]                    # (1, M, 2)
+                if old_m.shape[0] == 0:
+                    hf.create_dataset("member_errors", data=new_row)
+                else:
+                    hf.create_dataset("member_errors", data=np.concatenate([old_m, new_row], axis=0))
 
         # Full snapshot + optional async plot
         if self.count % self.dump_f == 0:
@@ -245,19 +371,23 @@ class ECGValidator:
             os.makedirs(it_dir, exist_ok=True)
             snap = os.path.join(it_dir, f'{self.name}_{self.count:06d}.h5')
             with h5py.File(snap, "w") as hf:
-                hf.create_dataset("phi_hat",  data=phi_hat_np.astype(np.float32))
+                hf.create_dataset("phi_hat",  data=phi_mean_np.astype(np.float32))
                 hf.create_dataset("phi_true", data=phi_true_np.astype(np.float32))
                 hf.create_dataset("V_pred",   data=V_pred.numpy().astype(np.float32))
                 hf.create_dataset("V_meas",   data=self.loss_fn.V_meas.numpy().astype(np.float32))
+                if ensemble:
+                    hf.create_dataset("phi_hats", data=phi_hats_np.astype(np.float32))
+                    V_preds_np = np.stack([v.numpy() for v in vpred_list]).astype(np.float32)
+                    hf.create_dataset("V_preds",  data=V_preds_np)
 
             if self.plot_async:
-                p = mp.Process(
+                proc = mp.Process(
                     target=_plot_snapshot_worker,
                     args=(snap, self._vertices, self._faces, self._t_grid, it_dir),
                     daemon=True,
                 )
-                p.start()
-                self._procs.append(p)
+                proc.start()
+                self._procs.append(proc)
 
         self.count += 1
         return mean_err

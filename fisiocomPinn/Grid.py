@@ -60,17 +60,30 @@ class Grid:
             grads[:, 2, 1] = (p1[:, 0] - p0[:, 0]) / cross2
 
         elif self.dim == 3:
-            # Laplace-Beltrami: cotangent weights use 3-D edge lengths and areas.
-            # The stiffness assembly below is the same; only gradient computation
-            # differs (needs projection onto the triangle tangent plane).
-            cross_vec = np.cross(e01, e02)              # (F, 3)
-            areas     = np.linalg.norm(cross_vec, axis=1) / 2.0
-            # Surface gradients require a local 2-D frame per triangle.
-            raise NotImplementedError(
-                "3-D surface gradients not yet implemented. "
-                "Stiffness / mass assembly and eigenfunctions work for 3-D; "
-                "gradient() and assemble_rhs() require a tangent-frame projection."
-            )
+            cross_vec = np.cross(e01, e02)                          # (F, 3)
+            areas     = np.linalg.norm(cross_vec, axis=1) / 2.0    # (F,)
+
+            # Local 2-D tangent frame per triangle
+            e1    = e01 / np.linalg.norm(e01, axis=1, keepdims=True)      # (F, 3)
+            n_hat = cross_vec / (2.0 * areas[:, None])                    # (F, 3) unit normal
+            e2    = np.cross(n_hat, e1)                                    # (F, 3)
+
+            # Local 2-D coords of p2 in the (e1, e2) frame
+            u1 = np.linalg.norm(e01, axis=1)                       # (F,)
+            u2 = np.einsum('fd,fd->f', e02, e1)                    # (F,)
+            v2 = np.einsum('fd,fd->f', e02, e2)                    # (F,)
+            area2 = u1 * v2                                         # (F,) = 2A in local frame
+
+            # 2-D basis-function gradients projected back to 3-D via tangent frame
+            # ∇ψ_0: (-v2, u2-u1) / area2  in (e1,e2)
+            # ∇ψ_1: ( v2,  -u2 ) / area2
+            # ∇ψ_2: (  0,   u1 ) / area2
+            grads = np.zeros((len(f), 3, 3))
+            grads[:, 0, :] = ((-v2         ) / area2)[:, None] * e1 \
+                           + ((u2 - u1     ) / area2)[:, None] * e2
+            grads[:, 1, :] = (( v2         ) / area2)[:, None] * e1 \
+                           + ((-u2         ) / area2)[:, None] * e2
+            grads[:, 2, :] = (( u1         ) / area2)[:, None] * e2
         else:
             raise ValueError(f"Expected dim 2 or 3, got {self.dim}")
 
@@ -367,3 +380,178 @@ def annular_mesh(n_r, n_theta, inner_r, outer_r, center=(0.0, 0.0)):
             faces.append([v00, v11, v01])
 
     return verts, np.array(faces, dtype=np.int32)
+
+
+# ------------------------------------------------------------------
+# 3-D tetrahedral mesh
+# ------------------------------------------------------------------
+
+class Grid3D:
+    """
+    FEM tetrahedral volume mesh with a 3-D Laplacian and differentiable Poisson solver.
+
+    Parameters
+    ----------
+    vertices : (N, 3) numpy array — node coordinates
+    tets     : (T, 4) int numpy array — tetrahedral connectivity, 0-indexed
+    """
+
+    def __init__(self, vertices, tets):
+        self.vertices = np.asarray(vertices, dtype=np.float64)
+        self.tets     = np.asarray(tets,     dtype=np.int32)
+        self.N        = len(self.vertices)
+        self.n_tets   = len(self.tets)
+
+        self._volumes, self._grads = self._tet_geometry()
+        self.K, self.M             = self._assemble()
+
+        K_pinned = self._pin(self.K.copy())
+        self._lu = spla.factorized(K_pinned.tocsc())
+
+    # ------------------------------------------------------------------
+    # Private
+    # ------------------------------------------------------------------
+
+    def _tet_geometry(self):
+        """
+        Per-tet volumes (n_tets,) and basis-function gradients (n_tets, 4, 3).
+
+        For a linear tet with vertices p0-p3:
+          Jacobian B = [p1-p0 | p2-p0 | p3-p0]  (3×3, columns = edge vectors)
+          Volume = |det B| / 6
+          ∇ψ_i = B^{-T} e_i  (for i=1,2,3);  ∇ψ_0 = −(∇ψ_1+∇ψ_2+∇ψ_3)
+        """
+        v, t = self.vertices, self.tets
+        p0, p1, p2, p3 = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]], v[t[:, 3]]
+
+        B = np.stack([p1 - p0, p2 - p0, p3 - p0], axis=2)   # (T, 3, 3) – columns = edges
+        dets    = np.linalg.det(B)                             # (T,)
+        volumes = np.abs(dets) / 6.0
+
+        # B^{-T} @ e_i  =  row i of B^{-1}
+        Binv = np.linalg.inv(B)                                # (T, 3, 3)
+
+        grads = np.zeros((self.n_tets, 4, 3))
+        grads[:, 1, :] = Binv[:, 0, :]                        # ∇ψ_1
+        grads[:, 2, :] = Binv[:, 1, :]                        # ∇ψ_2
+        grads[:, 3, :] = Binv[:, 2, :]                        # ∇ψ_3
+        grads[:, 0, :] = -Binv.sum(axis=1)                    # ∇ψ_0
+
+        return volumes, grads
+
+    def _assemble(self):
+        """
+        Stiffness K (Laplacian) and lumped mass M.
+        K[a,b] = Σ_T  V_T (∇ψ_a^T · ∇ψ_b^T)
+        M[i]   = Σ_T  V_T / 4   for each tet T touching node i
+        """
+        t = self.tets
+
+        # Element stiffness: K_T = V_T * grads_T grads_T^T   (T, 4, 4)
+        K_local = self._volumes[:, None, None] * np.einsum(
+            'tid,tjd->tij', self._grads, self._grads)
+
+        rows, cols, vals = [], [], []
+        for a in range(4):
+            for b in range(4):
+                rows.append(t[:, a])
+                cols.append(t[:, b])
+                vals.append(K_local[:, a, b])
+
+        rows = np.concatenate(rows)
+        cols = np.concatenate(cols)
+        vals = np.concatenate(vals)
+        K    = sp.csr_matrix((vals, (rows, cols)), shape=(self.N, self.N))
+
+        mass = np.zeros(self.N)
+        for i in range(4):
+            np.add.at(mass, t[:, i], self._volumes / 4.0)
+        M = sp.diags(mass)
+
+        return K.tocsr(), M.tocsr()
+
+    @staticmethod
+    def _pin(K):
+        K = K.tolil()
+        K[0, :] = 0
+        K[:, 0] = 0
+        K[0, 0] = 1
+        return K.tocsr()
+
+    # ------------------------------------------------------------------
+    # Public
+    # ------------------------------------------------------------------
+
+    def eigenfunctions(self, n_eig):
+        """Laplacian eigenfunctions: K v = λ M v."""
+        vals, vecs = spla.eigsh(self.K, k=n_eig, M=self.M, sigma=1e-8, which='LM')
+        return vecs[:, np.argsort(vals)]
+
+    def gradient(self, phi):
+        """
+        Piecewise-constant 3-D gradient per tet: ∇φ_T = Σ_i φ_i ∇ψ_i.
+
+        Parameters
+        ----------
+        phi : (N,) torch tensor or numpy array
+
+        Returns
+        -------
+        grad_phi : (n_tets, 3)
+        """
+        t = self.tets
+        if isinstance(phi, torch.Tensor):
+            dev = phi.device
+            tt  = torch.tensor(t, dtype=torch.long, device=dev)
+            Gt  = torch.tensor(self._grads, dtype=phi.dtype, device=dev)
+            phi_nodes = torch.stack([phi[tt[:, i]] for i in range(4)], dim=1)  # (T, 4)
+            return torch.einsum('ti,tid->td', phi_nodes, Gt)                   # (T, 3)
+        else:
+            phi_nodes = phi[t]                                                  # (T, 4)
+            return np.einsum('ti,tid->td', phi_nodes, self._grads)             # (T, 3)
+
+    def assemble_rhs(self, q):
+        """
+        Weak-form RHS:  b_i = Σ_T  V_T  q_T · ∇ψ_i_T.
+
+        Parameters
+        ----------
+        q : (N, 3) torch tensor or numpy array — piecewise-linear flux field
+
+        Returns
+        -------
+        b : (N,)
+        """
+        t = self.tets
+        if isinstance(q, torch.Tensor):
+            dev  = q.device
+            tt   = torch.tensor(t, dtype=torch.long, device=dev)
+            Vt   = torch.tensor(self._volumes, dtype=q.dtype, device=dev)
+            Gt   = torch.tensor(self._grads,   dtype=q.dtype, device=dev)
+            q_T  = torch.stack([q[tt[:, i]] for i in range(4)], dim=1).mean(dim=1)  # (T, 3)
+            dots = torch.einsum('td,tid->ti', q_T, Gt)                               # (T, 4)
+            contrib = Vt[:, None] * dots
+            b = torch.zeros(self.N, dtype=q.dtype, device=dev)
+            for i in range(4):
+                b.scatter_add_(0, tt[:, i], contrib[:, i])
+            return b
+        else:
+            q     = np.asarray(q, dtype=np.float64)
+            q_T   = q[t].mean(axis=1)                                       # (T, 3)
+            dots  = np.einsum('td,tid->ti', q_T, self._grads)               # (T, 4)
+            contrib = self._volumes[:, None] * dots
+            b = np.zeros(self.N)
+            for i in range(4):
+                np.add.at(b, t[:, i], contrib[:, i])
+            return b
+
+    def solve_poisson(self, b):
+        """Solve K φ = b with pinned gauge (φ[0] fixed, φ.min() = 0)."""
+        if isinstance(b, torch.Tensor):
+            return _PoissonSolve.apply(b, self._lu)
+        else:
+            b = np.asarray(b, dtype=np.float64).copy()
+            b -= b.mean()
+            b[0] = 0.0
+            phi  = self._lu(b)
+            return phi - phi.min()
