@@ -233,7 +233,7 @@ x = torch.linspace(0, 1, 100).view(-1, 1)
 y = torch.sin(2 * torch.pi * x)
 
 # Create loss object
-data_loss = LOSS(device="cuda", criterium="RMSE", name="Data Loss", batch_size=32)
+data_loss = LOSS(device="cpu", criterium="RMSE", name="Data Loss", batch_size=32)
 data_loss.add_data(x, y)
 
 # Create trainer
@@ -242,8 +242,6 @@ trainer = Trainer(
     model=model,
     batch_size=32,
     optimizer=torch.optim.Adam(model.parameters(), lr=1e-3),
-    data=x,
-    target=y,
 )
 
 trainer.add_loss(data_loss)
@@ -287,46 +285,53 @@ The total loss during training is computed as:
 
 ### 4. `Trainer.py`
 
-Manages the **training loop**, batching, validation, and early stopping.
-
-#### `Trainer` Class
+Manages training with fixed or adaptive loss weights. By default, the trainer
+creates Adam using `lr` and `betas`. Pass an optimizer instance to use its own
+hyperparameters, parameter groups and existing state instead.
 
 ```python
+import torch
 from fisiocomPinn.Trainer import Trainer
 
+# Move the model before constructing its optimizer.
+device = "cpu"
+my_model = torch.nn.Linear(1, 1).to(device)
+optimizer = torch.optim.SGD(my_model.parameters(), lr=0.01, momentum=0.9)
 trainer = Trainer(
     n_epochs=5000,
     model=my_model,
-    device="cuda",
-    batch_size=256,
-    data=X_train,
-    target=Y_train,
-    optimizer=torch.optim.Adam(my_model.parameters(), lr=1e-3),
-    validation=0.2,
+    device=device,
+    optimizer=optimizer,
+    adaptive=False,
 )
+# Define physics_loss using LOSS, then:
+# trainer.add_loss(physics_loss, weigth=0.5)
+# trained_model, loss_history = trainer.train()
 ```
 
-##### Key Methods
+`optimizer` must be a `torch.optim.Optimizer` instance containing all trainable
+model parameters. For example, SGD, AdamW and RMSprop can be passed this way.
+Trainer's `lr` and `betas` are ignored when an external optimizer is provided.
+Optimizers requiring a closure, such as LBFGS, are currently rejected explicitly.
 
-| Method                         | Description                                                   |
-| ------------------------------ | ------------------------------------------------------------- |
-| `add_loss(loss_obj, weight=1)` | Add a custom loss term                                        |
-| `train_test_split()`           | Split data into training/testing sets                         |
-| `train()`                      | Run training loop with validation and patience-based stopping |
+With `adaptive=True` (the default), the trainer adds a parameter group for the
+learnable loss weights on the first `train()` call. That group inherits the
+optimizer defaults. Repeated calls reuse the external optimizer and adaptive
+weights without adding duplicate groups. Register all losses before the first
+call: changing their number afterward requires a new trainer and optimizer.
 
-##### Early stopping parameters
+| Method | Description |
+| ------ | ----------- |
+| `add_loss(loss_obj, weigth=1)` | Register a loss; fixed weights apply when `adaptive=False` |
+| `train()` | Return the trained model and per-loss history |
 
-* **`patience`**: number of iterations without improvement before stopping
-* **`tolerance`**: minimum relative improvement threshold
+`patience` and `tolerance` are accepted by the constructor but are not currently
+used for early stopping in the training loops.
 
-##### Example
+Run optimizer regression tests in an environment with the package dependencies:
 
-```python
-# Add physics-informed loss
-trainer.add_loss(physics_loss, weight=0.5)
-
-# Train
-trained_model, loss_history = trainer.train()
+```bash
+python -B -m unittest discover -s tests -v
 ```
 
 ---
