@@ -33,8 +33,10 @@ fisiocomPinn/
 ├── dependencies.py      # Utility imports and folder management
 ├── Utils.py             # Dataset generation, loading, and validation helpers
 ├── Loss.py              # Generic and custom loss functions (MSE, RMSE, LP, etc.)
-├── Trainer.py           # Training loop with early stopping and validation
-└── LICENSE.md           # GNU GPLv3 License
+├── Trainer.py           # Training with configurable optimizers and loss weights
+├── Net.py               # Fully connected networks
+├── Loss_PINN.py         # Physics and initial-condition losses
+└── Validator.py         # Validation and result export
 ```
 
 ---
@@ -170,7 +172,7 @@ Links a **custom batch generation function** to dynamically produce training poi
 
 ```python
 def my_batch_gen(batch_size, device, range_):
-    x = torch.linspace(0, 1, batch_size).view(-1, 1).to(device)
+    x = torch.linspace(*range_, batch_size, device=device).view(-1, 1)
     y = x**2
     return x, y
 
@@ -185,13 +187,16 @@ Defines how model outputs should be computed — useful for **physics-informed l
 
 ```python
 def pde_residual(batch, model, mu):
-    x = batch
+    x = batch.requires_grad_(True)
     y = model(x)
     dy_dx = torch.autograd.grad(y, x, torch.ones_like(y), create_graph=True)[0]
     return dy_dx - mu * y  # residual
 
-loss.setEvalFunction(pde_residual, mu=0.1)
+loss.setEvalFunction(pde_residual, 0.1)
 ```
+
+Extra evaluation arguments are positional. For a homogeneous residual equation,
+configure the batch generator to return zero targets with the residual shape.
 
 ---
 
@@ -233,7 +238,7 @@ x = torch.linspace(0, 1, 100).view(-1, 1)
 y = torch.sin(2 * torch.pi * x)
 
 # Create loss object
-data_loss = LOSS(device="cuda", criterium="RMSE", name="Data Loss", batch_size=32)
+data_loss = LOSS(device="cpu", criterium="RMSE", name="Data Loss", batch_size=32)
 data_loss.add_data(x, y)
 
 # Create trainer
@@ -242,8 +247,6 @@ trainer = Trainer(
     model=model,
     batch_size=32,
     optimizer=torch.optim.Adam(model.parameters(), lr=1e-3),
-    data=x,
-    target=y,
 )
 
 trainer.add_loss(data_loss)
@@ -270,63 +273,153 @@ loss = LOSS(criterium="L1Smooth")
 
 #### 🔄 Combined Loss Example
 
-Use the `Trainer.add_loss(loss_obj, weight)` method to combine multiple loss terms:
+For fixed weights, create the trainer with `adaptive=False` and register each
+loss using `Trainer.add_loss(loss_obj, weigth=1)`. The keyword is spelled
+`weigth` in the current API:
 
 ```python
-trainer.add_loss(data_loss, weight=1.0)
-trainer.add_loss(physics_loss, weight=0.5)
+trainer.add_loss(data_loss, weigth=1.0)
+trainer.add_loss(physics_loss, weigth=0.5)
 ```
 
 The total loss during training is computed as:
 
-[
-\mathcal{L}_{total} = \sum_i w_i , \mathcal{L}_i
-]
+$$
+\mathcal{L}_{total} = \sum_i w_i \mathcal{L}_i
+$$
 
 ---
 
 ### 4. `Trainer.py`
 
-Manages the **training loop**, batching, validation, and early stopping.
+Manages training with fixed or adaptive loss weights. By default, the trainer
+creates Adam using `lr` and `betas`. Pass an optimizer instance to use its own
+hyperparameters, parameter groups and existing state instead.
 
-#### `Trainer` Class
+#### Constructor
 
 ```python
-from fisiocomPinn.Trainer import Trainer
-
-trainer = Trainer(
-    n_epochs=5000,
-    model=my_model,
-    device="cuda",
-    batch_size=256,
-    data=X_train,
-    target=Y_train,
-    optimizer=torch.optim.Adam(my_model.parameters(), lr=1e-3),
-    validation=0.2,
+Trainer(
+    n_epochs,
+    model,
+    device="cpu",
+    batch_size=1000,
+    adaptive=True,
+    patience=300,
+    tolerance=1e-3,
+    print_steps=5000,
+    lr=1e-3,
+    betas=(0.9, 0.9999),
+    optimizer=None,
 )
 ```
 
-##### Key Methods
+| Parameter | Behavior |
+| --------- | -------- |
+| `n_epochs` | Number of optimizer steps per `train()` call |
+| `model` | PyTorch module to train |
+| `device` | Target device; move the model there before constructing an external optimizer |
+| `optimizer` | Optimizer instance, not its class; `None` creates Adam |
+| `lr`, `betas` | Settings for the default Adam only |
+| `adaptive` | Learn loss weights when `True`; use `add_loss` weights when `False` |
+| `print_steps` | Logging interval in iterations; use a positive integer |
+| `batch_size` | Currently unused by Trainer; configure batching on each `LOSS` |
+| `patience`, `tolerance` | Currently unused; the loops do not perform early stopping |
 
-| Method                         | Description                                                   |
-| ------------------------------ | ------------------------------------------------------------- |
-| `add_loss(loss_obj, weight=1)` | Add a custom loss term                                        |
-| `train_test_split()`           | Split data into training/testing sets                         |
-| `train()`                      | Run training loop with validation and patience-based stopping |
+#### Complete example: external SGD
 
-##### Early stopping parameters
-
-* **`patience`**: number of iterations without improvement before stopping
-* **`tolerance`**: minimum relative improvement threshold
-
-##### Example
+This CPU example fits `y = 2x` using a supervised loss and fixed weighting.
 
 ```python
-# Add physics-informed loss
-trainer.add_loss(physics_loss, weight=0.5)
+import torch
+from fisiocomPinn.Loss import LOSS
+from fisiocomPinn.Trainer import Trainer
 
-# Train
+torch.manual_seed(0)
+device = "cpu"
+model = torch.nn.Linear(1, 1).to(device)
+x = torch.linspace(-1, 1, 32, device=device).view(-1, 1)
+y = 2 * x
+
+data_loss = LOSS(device=device, criterium="MSE", name="data", batch_size=32)
+data_loss.add_data(x, y)
+
+optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+trainer = Trainer(
+    n_epochs=100,
+    model=model,
+    device=device,
+    optimizer=optimizer,
+    adaptive=False,
+    print_steps=50,
+)
+trainer.add_loss(data_loss, weigth=1.0)
 trained_model, loss_history = trainer.train()
+print(loss_history["data"][-1])
+```
+
+To choose a different optimizer for a new trainer, construct it with the model
+parameters and its own settings:
+
+```python
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+trainer = Trainer(n_epochs=100, model=model, device=device, optimizer=optimizer)
+trainer.add_loss(data_loss)
+trained_model, loss_history = trainer.train()
+```
+
+To retain the original Adam behavior, omit `optimizer`:
+
+```python
+trainer = Trainer(n_epochs=100, model=model, device=device, lr=1e-3)
+trainer.add_loss(data_loss)
+trained_model, loss_history = trainer.train()
+```
+
+#### Optimizer lifecycle and adaptive weights
+
+`optimizer` must be a `torch.optim.Optimizer` instance containing all trainable
+model parameters. For example, SGD, AdamW and RMSprop can be passed this way.
+Trainer's `lr` and `betas` are ignored when an external optimizer is provided.
+Optimizers requiring a closure, such as LBFGS, are currently rejected explicitly.
+
+With `adaptive=True` (the default), the trainer adds a parameter group for the
+learnable loss weights on the first `train()` call. That group inherits the
+optimizer defaults. Repeated calls reuse the external optimizer and adaptive
+weights without adding duplicate groups. Register all losses before the first
+call: changing their number afterward requires a new trainer and optimizer.
+Keep the loss order and meaning unchanged when continuing an adaptive run.
+Create a separate optimizer for each independent trainer.
+
+With adaptive weighting, the objective is
+`sum(exp(-s_i) * loss_i + s_i)`, where `s_i` are learned log variables.
+The fixed `weigth` argument is ignored in this mode. The additional parameter
+group inherits optimizer defaults, including weight decay when configured.
+
+When `optimizer=None`, each `train()` call creates a fresh Adam and, in adaptive
+mode, fresh loss weights. Model parameters retain their current values.
+With an external optimizer, its state (such as momentum) persists across calls.
+
+#### Results and current limitations
+
+`train()` returns `(model, loss_history)`. Each history key is a registered loss
+name and contains raw, unweighted loss values measured before each update.
+Use unique names for losses. History starts afresh on each `train()` call.
+If no loss has been registered, the method prints a message and returns `None`.
+The trainer does not automatically split datasets or run `Validator`.
+
+| Method | Description |
+| ------ | ----------- |
+| `add_loss(loss_obj, weigth=1)` | Register a loss; fixed weights apply when `adaptive=False` |
+| `train()` | Return the trained model and per-loss history |
+
+`patience` and `tolerance` are accepted by the constructor but are not currently
+used for early stopping in the training loops.
+
+Run optimizer regression tests in an environment with the package dependencies:
+
+```bash
+python -B -m unittest discover -s tests -v
 ```
 
 ---

@@ -1,6 +1,7 @@
 from fisiocomPinn.Loss import *
 from math import ceil
 import time
+from inspect import signature, Parameter
 
 
 class AdaptiveLossWeights(nn.Module):
@@ -38,9 +39,40 @@ class Trainer:
         print_steps=5000,
         lr=1e-3,
         betas=(0.9, 0.9999),
+        optimizer=None,
     ):
+        """Create a trainer with an optional torch.optim.Optimizer instance.
+
+        Move the model to its target device before constructing an external
+        optimizer. Its settings and state are preserved; lr and betas only
+        configure the default Adam. Optimizers requiring a closure are not
+        supported by these training loops.
+        """
+        if optimizer is not None:
+            if not isinstance(optimizer, optim.Optimizer):
+                raise TypeError("optimizer must be a torch.optim.Optimizer instance")
+            closure = signature(optimizer.step).parameters.get("closure")
+            if closure is not None and closure.default is Parameter.empty:
+                raise ValueError("Optimizers requiring a closure are not supported")
 
         self.model = model.to(device)
+        if optimizer is not None:
+            optimizer_params = {
+                id(param)
+                for group in optimizer.param_groups
+                for param in group["params"]
+            }
+            if any(
+                param.requires_grad and id(param) not in optimizer_params
+                for param in self.model.parameters()
+            ):
+                raise ValueError(
+                    "optimizer must include all trainable model parameters; "
+                    "move the model to device before creating the optimizer"
+                )
+        self.optimizer = optimizer
+        self._external_optimizer = optimizer is not None
+        self.adaptive_weights = None
         self.device = device
         self.tolerance = tolerance
         self.patience = patience
@@ -165,24 +197,39 @@ class Trainer:
 
         if self.adaptive:
 
-            adaptive_weights = AdaptiveLossWeights(n_terms=len(self.losses)).to(
-                self.device
-            )
-
-            self.optimizer = optim.Adam(
-                list(self.model.parameters()) + list(adaptive_weights.parameters()),
-                lr=self.lr,
-                betas=self.betas,
-            )
+            if self._external_optimizer:
+                if self.adaptive_weights is None:
+                    self.adaptive_weights = AdaptiveLossWeights(len(self.losses)).to(
+                        self.device
+                    )
+                    self.optimizer.add_param_group(
+                        {"params": list(self.adaptive_weights.parameters())}
+                    )
+                elif len(self.adaptive_weights.log_vars) != len(self.losses):
+                    raise ValueError(
+                        "Cannot change the number of adaptive losses after training "
+                        "with an external optimizer; create a new trainer and optimizer"
+                    )
+                adaptive_weights = self.adaptive_weights
+            else:
+                adaptive_weights = AdaptiveLossWeights(n_terms=len(self.losses)).to(
+                    self.device
+                )
+                self.optimizer = optim.Adam(
+                    list(self.model.parameters()) + list(adaptive_weights.parameters()),
+                    lr=self.lr,
+                    betas=self.betas,
+                )
 
             loss_dict = self.adaptive_loop(loss_dict, adaptive_weights)
 
         else:
-            self.optimizer = optim.Adam(
-                self.model.parameters(),
-                lr=self.lr,
-                betas=self.betas,
-            )
+            if not self._external_optimizer:
+                self.optimizer = optim.Adam(
+                    self.model.parameters(),
+                    lr=self.lr,
+                    betas=self.betas,
+                )
 
             loss_dict = self.default_loop(loss_dict)
 
