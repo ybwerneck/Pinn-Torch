@@ -1,7 +1,9 @@
 from fisiocomPinn.Loss import *
-from math import ceil
+from math import isfinite
+from numbers import Integral, Real
 import time
 from inspect import signature, Parameter
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 
 class AdaptiveLossWeights(nn.Module):
@@ -40,6 +42,7 @@ class Trainer:
         lr=1e-3,
         betas=(0.9, 0.9999),
         optimizer=None,
+        scheduler=None,
     ):
         """Create a trainer with an optional torch.optim.Optimizer instance.
 
@@ -47,7 +50,30 @@ class Trainer:
         optimizer. Its settings and state are preserved; lr and betas only
         configure the default Adam. Optimizers requiring a closure are not
         supported by these training loops.
+
+        An optional PyTorch scheduler must reference the supplied optimizer.
+        It advances after each optimizer step. ReduceLROnPlateau receives the
+        early-stopping metric. With a scheduler, adaptive parameters join the
+        first optimizer group and share its settings and learning-rate schedule.
+
+        Early stopping minimizes the fixed weighted loss, or the raw loss sum
+        in adaptive mode. A decrease strictly greater than tolerance resets
+        patience. Set patience=None to disable it. The final iterate is returned;
+        best weights are not restored.
         """
+        if patience is not None and (
+            isinstance(patience, bool)
+            or not isinstance(patience, Integral)
+            or patience < 1
+        ):
+            raise ValueError("patience must be a positive integer or None")
+        if (
+            isinstance(tolerance, bool)
+            or not isinstance(tolerance, Real)
+            or not isfinite(tolerance)
+            or tolerance < 0
+        ):
+            raise ValueError("tolerance must be finite and non-negative")
         if optimizer is not None:
             if not isinstance(optimizer, optim.Optimizer):
                 raise TypeError("optimizer must be a torch.optim.Optimizer instance")
@@ -55,6 +81,13 @@ class Trainer:
             if closure is not None and closure.default is Parameter.empty:
                 raise ValueError("Optimizers requiring a closure are not supported")
 
+        if scheduler is not None:
+            if not isinstance(scheduler, (LRScheduler, ReduceLROnPlateau)):
+                raise TypeError("scheduler must be a PyTorch LR scheduler instance")
+            if optimizer is None or scheduler.optimizer is not optimizer:
+                raise ValueError("scheduler must reference the supplied optimizer")
+
+        self.scheduler = scheduler
         self.model = model.to(device)
         if optimizer is not None:
             optimizer_params = {
@@ -86,6 +119,41 @@ class Trainer:
 
         return
 
+    def _reset_early_stopping(self):
+        """Reset monitoring state for each train call."""
+        self.best_loss = float("inf")
+        self.patience_count = 0
+        self.stopped_early = False
+        self.n_epochs_run = 0
+        self.monitor_history = []
+
+    def _step_scheduler(self, metric):
+        """Advance an optional scheduler once per completed optimizer step."""
+        if isinstance(self.scheduler, ReduceLROnPlateau):
+            self.scheduler.step(metric)
+        elif self.scheduler is not None:
+            self.scheduler.step()
+
+    def _check_early_stopping(self, value):
+        """Record the pre-update metric after a completed optimizer step."""
+        self.n_epochs_run += 1
+        self.monitor_history.append(value)
+        if value < self.best_loss - self.tolerance:
+            self.best_loss = value
+            self.patience_count = 0
+        else:
+            self.patience_count += 1
+        self.stopped_early = (
+            self.patience is not None and self.patience_count >= self.patience
+        )
+        if self.stopped_early:
+            print(
+                f"Early stopping after {self.n_epochs_run} iterations: "
+                f"no improvement greater than {self.tolerance} "
+                f"for {self.patience_count} evaluations."
+            )
+        return self.stopped_early
+
     def shuffle_data(self, *arrays):
         indices = np.random.permutation(arrays[0].shape[0])
 
@@ -115,11 +183,15 @@ class Trainer:
 
                 loss_dict[loss_obj.name].append(loss.item())
 
+            if not torch.isfinite(total_loss).all().item():
+                raise FloatingPointError("Non-finite training loss before optimizer step")
+
             # Backward pass
             total_loss.backward()
 
             # Update weights
             self.optimizer.step()
+            self._step_scheduler(total_loss.item())
 
             iteration_time = time.time() - start_time  # Calculate iteration duration
 
@@ -132,6 +204,9 @@ class Trainer:
                         iteration_time,
                     )
                 )
+
+            if self._check_early_stopping(total_loss.item()):
+                break
 
         return loss_dict
 
@@ -157,11 +232,16 @@ class Trainer:
             # Adaptive weighting
             total_loss, weighted_losses = adaptive_weights(losses)
 
+            monitor_value = sum(loss.item() for loss in losses)
+            if not isfinite(monitor_value) or not torch.isfinite(total_loss).all().item():
+                raise FloatingPointError("Non-finite training loss before optimizer step")
+
             # Backward pass
             total_loss.backward()
 
             # Update weights
             self.optimizer.step()
+            self._step_scheduler(monitor_value)
 
             iteration_time = time.time() - start_time  # Calculate iteration duration
 
@@ -178,6 +258,9 @@ class Trainer:
                     )
                 )
 
+            if self._check_early_stopping(monitor_value):
+                break
+
         return loss_dict
 
     def train(
@@ -193,7 +276,7 @@ class Trainer:
         for loss in self.losses:
             loss_dict[loss.name] = []
 
-        patience_count = 0
+        self._reset_early_stopping()
 
         if self.adaptive:
 
@@ -202,9 +285,16 @@ class Trainer:
                     self.adaptive_weights = AdaptiveLossWeights(len(self.losses)).to(
                         self.device
                     )
-                    self.optimizer.add_param_group(
-                        {"params": list(self.adaptive_weights.parameters())}
-                    )
+                    if self.scheduler is None:
+                        self.optimizer.add_param_group(
+                            {"params": list(self.adaptive_weights.parameters())}
+                        )
+                    else:
+                        # Schedulers capture per-group settings at construction.
+                        # Keep that group layout intact, including on reuse.
+                        self.optimizer.param_groups[0]["params"].extend(
+                            self.adaptive_weights.parameters()
+                        )
                 elif len(self.adaptive_weights.log_vars) != len(self.losses):
                     raise ValueError(
                         "Cannot change the number of adaptive losses after training "

@@ -139,6 +139,26 @@ fisiocomPinn/
 
 ---
 
+## Testing
+
+Run the test suite locally after installing the package dependencies:
+
+```bash
+python -B -m unittest discover -s tests -v
+```
+
+The [Tests workflow](.github/workflows/tests.yml) runs this suite on Ubuntu with
+Python 3.11 and CPU-only PyTorch whenever a pull request targeting `main` is
+opened, reopened, or updated with new commits. It installs dependencies from
+`setup.py`; no development extra is required. New commits cancel any older run
+still in progress for the same pull request.
+
+To block merging when tests fail, configure a branch protection rule or ruleset
+for `main` requiring the `Unit tests (CPU, Python 3.11)` status check. The workflow
+alone reports results and does not configure branch protection.
+
+---
+
 ## 🧾 Commit and Pull Request Rules
 
 Follow these conventions for clarity and traceability:
@@ -167,5 +187,4 @@ feat: add adaptive learning rate scheduler to Trainer class
 * Reference related Issues in your PR description.
 * Include **summary of the change**, **impact**, and **testing evidence**.
 * Ensure code passes all tests and lint checks before submission.
-
 
