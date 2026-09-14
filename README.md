@@ -11,7 +11,7 @@ This framework was developed as part of a **PhD research project** within the *F
 
 * 🧩 **General-purpose PINN architecture** for solving PDEs and ODEs
 * ⚙️ **Modular losses**: MSE, MAE, RMSE, LP-norms, KL divergence, cosine similarity, etc.
-* 🧠 **Training engine** with early stopping, validation, and adaptive learning rate
+* 🧠 **Training engine** with configurable PyTorch optimizers and fixed or adaptive loss weights
 * 🔢 **Utility functions** for dataset generation, stochastic sampling, and plotting
 * 💻 **GPU/CPU compatible** using native PyTorch tensors
 
@@ -77,6 +77,9 @@ You can also install them manually via:
 ```bash
 pip install torch numpy matplotlib h5py chaospy
 ```
+
+For optimizer configuration, a runnable training example, and current limitations,
+see [the Trainer documentation](./DOCUMENTATION.md#4-trainerpy).
 
 For a detailed scientific example (including biological ODEs), see
 👉 [`examples/Example_PINN_EDO.ipynb`](./examples/Example_PINN_EDO.ipynb)
