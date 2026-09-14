@@ -311,20 +311,23 @@ Trainer(
     lr=1e-3,
     betas=(0.9, 0.9999),
     optimizer=None,
+    scheduler=None,
 )
 ```
 
 | Parameter | Behavior |
 | --------- | -------- |
-| `n_epochs` | Number of optimizer steps per `train()` call |
+| `n_epochs` | Maximum number of optimizer steps per `train()` call |
 | `model` | PyTorch module to train |
 | `device` | Target device; move the model there before constructing an external optimizer |
 | `optimizer` | Optimizer instance, not its class; `None` creates Adam |
+| `scheduler` | Optional PyTorch LR scheduler instance bound to the supplied `optimizer`; `None` leaves the learning rate unchanged by Trainer |
 | `lr`, `betas` | Settings for the default Adam only |
 | `adaptive` | Learn loss weights when `True`; use `add_loss` weights when `False` |
 | `print_steps` | Logging interval in iterations; use a positive integer |
 | `batch_size` | Currently unused by Trainer; configure batching on each `LOSS` |
-| `patience`, `tolerance` | Currently unused; the loops do not perform early stopping |
+| `patience` | Consecutive evaluations without sufficient improvement before stopping; positive integer, or `None` to disable (default: 300) |
+| `tolerance` | Minimum absolute decrease required to reset patience; finite and non-negative (default: 1e-3) |
 
 #### Complete example: external SGD
 
@@ -383,7 +386,7 @@ model parameters. For example, SGD, AdamW and RMSprop can be passed this way.
 Trainer's `lr` and `betas` are ignored when an external optimizer is provided.
 Optimizers requiring a closure, such as LBFGS, are currently rejected explicitly.
 
-With `adaptive=True` (the default), the trainer adds a parameter group for the
+With `adaptive=True` (the default) and no scheduler, the trainer adds a parameter group for the
 learnable loss weights on the first `train()` call. That group inherits the
 optimizer defaults. Repeated calls reuse the external optimizer and adaptive
 weights without adding duplicate groups. Register all losses before the first
@@ -400,6 +403,51 @@ When `optimizer=None`, each `train()` call creates a fresh Adam and, in adaptive
 mode, fresh loss weights. Model parameters retain their current values.
 With an external optimizer, its state (such as momentum) persists across calls.
 
+#### Optional learning-rate scheduler
+
+Pass an optimizer and a scheduler constructed with that same optimizer.
+Omitting `scheduler` (or setting it to `None`) preserves optimizer-only behavior.
+The scheduler advances once after each optimizer update, including the final
+update that triggers early stopping. Its state persists across `train()` calls.
+Schedule durations therefore count optimizer steps, not full dataset passes.
+
+For a logarithmic learning-rate decay, using the `model` and `data_loss` above:
+
+```python
+import math
+
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+scheduler = torch.optim.lr_scheduler.LambdaLR(
+    optimizer,
+    lr_lambda=lambda step: 1.0 / (1.0 + math.log1p(step)),
+)
+trainer = Trainer(
+    n_epochs=10000, model=model, optimizer=optimizer,
+    scheduler=scheduler, patience=500, tolerance=1e-6,
+)
+trainer.add_loss(data_loss)
+trained_model, loss_history = trainer.train()
+```
+
+This schedules the learning rate, not the loss value. `StepLR`, `LambdaLR`, and
+other PyTorch schedulers with a parameterless `step()` use the same interface.
+`ReduceLROnPlateau` instead receives the pre-update training metric: the fixed
+weighted sum in fixed mode, or the raw loss sum in adaptive mode. Use `mode="min"`
+to reduce the learning rate when loss stops improving. No validation set is
+evaluated automatically. Its patience and thresholds are independent of early
+stopping; allow enough training iterations after reductions to assess their effect.
+
+When a scheduler is supplied with `adaptive=True`, the learned loss parameters
+join the **first existing optimizer group** on the first `train()` call. They
+share all its settings, including learning rate, weight decay, and momentum.
+This preserves the group layout already captured by the scheduler. Repeated
+calls do not duplicate these parameters. Without a scheduler, the separate-group
+behavior described above remains unchanged. Register losses before training and
+keep the optimizer's parameter-group layout unchanged during the run.
+
+Passing a scheduler without an explicit optimizer, or one bound to a different
+optimizer, raises `ValueError`. Pass an instance, not a scheduler class.
+
 #### Results and current limitations
 
 `train()` returns `(model, loss_history)`. Each history key is a registered loss
@@ -413,8 +461,42 @@ The trainer does not automatically split datasets or run `Validator`.
 | `add_loss(loss_obj, weigth=1)` | Register a loss; fixed weights apply when `adaptive=False` |
 | `train()` | Return the trained model and per-loss history |
 
-`patience` and `tolerance` are accepted by the constructor but are not currently
-used for early stopping in the training loops.
+#### Early stopping
+
+Both loops now use `patience` and `tolerance`. Existing runs may therefore stop
+earlier than before; use `patience=None` to retain the full iteration budget.
+
+```python
+trainer = Trainer(
+    n_epochs=10000, model=model, adaptive=True,
+    patience=500, tolerance=1e-6,
+)
+trainer.add_loss(data_loss)
+trained_model, loss_history = trainer.train()
+print(trainer.stopped_early, trainer.n_epochs_run)
+```
+
+The monitored metric is the fixed weighted sum for `adaptive=False`, and the
+sum of raw losses for `adaptive=True`. This keeps learned weight changes out of
+the stopping criterion. The latter sum is scale-dependent: normalize loss terms
+appropriately when combining physical quantities with different units or scales.
+A value strictly below `best_loss - tolerance` becomes the new reference and
+resets the counter; smaller improvements accumulate relative to that reference.
+Thus `best_loss` stores the last significant improvement, not necessarily the
+smallest observed value. `tolerance` is an absolute decrease, not a target loss.
+
+The first finite evaluation establishes the reference. With `patience=2`, a
+constant loss stops after three optimizer steps. Metrics are measured before
+each update, and the stopping decision follows that update. The returned model
+and optimizer retain their last state; best weights are not restored.
+`monitor_history`, `best_loss`, `patience_count`, `stopped_early`, and
+`n_epochs_run` describe the current call and reset at the next `train()` call.
+Non-finite objectives raise `FloatingPointError` before the optimizer update.
+
+This criterion monitors training batches, which may be resampled or noisy; it
+does not evaluate an independent validation set. A plateau does not establish
+physical accuracy. Evaluate solution errors, residuals, and initial/boundary
+conditions separately on independent points.
 
 Run optimizer regression tests in an environment with the package dependencies:
 
@@ -428,5 +510,3 @@ python -B -m unittest discover -s tests -v
 
 This library is distributed under the **GNU General Public License v3.0**.
 See [`LICENSE.md`](LICENSE.md) for full details.
-
-

@@ -12,6 +12,8 @@ This framework was developed as part of a **PhD research project** within the *F
 * 🧩 **General-purpose PINN architecture** for solving PDEs and ODEs
 * ⚙️ **Modular losses**: MSE, MAE, RMSE, LP-norms, KL divergence, cosine similarity, etc.
 * 🧠 **Training engine** with configurable PyTorch optimizers and fixed or adaptive loss weights
+* ⏹️ **Early stopping** with configurable patience and minimum loss improvement
+* 📉 **Optional PyTorch learning-rate schedulers**, including plateau-based scheduling
 * 🔢 **Utility functions** for dataset generation, stochastic sampling, and plotting
 * 💻 **GPU/CPU compatible** using native PyTorch tensors
 
@@ -125,5 +127,3 @@ See [`LICENSE.md`](./LICENSE.md) or [the full text](https://www.gnu.org/licenses
 **Supervised Research:**
 Federal University of Juiz de Fora (UFJF) — *PhD in Computational Modeling (PPGMC)*
 Fisiocom Group — *Computational Physiology and High-Perfomance Computing Laboratory*
-
-
