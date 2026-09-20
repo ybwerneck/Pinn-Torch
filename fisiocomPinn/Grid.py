@@ -8,6 +8,10 @@ Both assemble a stiffness matrix K and a lumped mass matrix M, and expose
 Laplace-Beltrami eigenfunctions, a piecewise-constant element gradient, its
 weak-form divergence, and a prefactorised differentiable linear solve.
 
+Both also expose ``elements``, ``measure`` and ``dim``, so code that only needs
+the connectivity, the per-element area or volume, and the dimension runs on
+either class without branching on the mesh type.
+
 structured_mesh and annular_mesh build simple 2-D meshes.
 """
 
@@ -36,6 +40,20 @@ class Grid:
 
         self._areas, self._grads = self._triangle_geometry()
         self.K, self.M           = self._assemble()
+
+    # ------------------------------------------------------------------
+    # Uniform element view, shared with Grid3D
+    # ------------------------------------------------------------------
+
+    @property
+    def elements(self):
+        """Element connectivity (F, 3). ``tets`` on Grid3D, ``faces`` here."""
+        return self.faces
+
+    @property
+    def measure(self):
+        """Per-element measure (F,): area here, volume on Grid3D."""
+        return self._areas
 
     # ------------------------------------------------------------------
     # Private: geometry and assembly
@@ -439,9 +457,24 @@ class Grid3D:
         self.tets     = np.asarray(tets,     dtype=np.int32)
         self.N        = len(self.vertices)
         self.n_tets   = len(self.tets)
+        self.dim      = self.vertices.shape[1]
 
         self._volumes, self._grads = self._tet_geometry()
         self.K, self.M             = self._assemble()
+
+    # ------------------------------------------------------------------
+    # Uniform element view, shared with Grid
+    # ------------------------------------------------------------------
+
+    @property
+    def elements(self):
+        """Element connectivity (T, 4). ``faces`` on Grid, ``tets`` here."""
+        return self.tets
+
+    @property
+    def measure(self):
+        """Per-element measure (T,): area on Grid, volume here."""
+        return self._volumes
 
     # ------------------------------------------------------------------
     # Private
