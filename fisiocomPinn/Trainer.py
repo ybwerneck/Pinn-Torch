@@ -2,6 +2,7 @@ from fisiocomPinn.Loss import *
 from math import isfinite
 from numbers import Integral, Real
 import time
+import os
 from inspect import signature, Parameter
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
@@ -43,6 +44,8 @@ class Trainer:
         betas=(0.9, 0.9999),
         optimizer=None,
         scheduler=None,
+        ckpt_path=None,
+        ckpt_freq=None,
     ):
         """Create a trainer with an optional torch.optim.Optimizer instance.
 
@@ -117,6 +120,18 @@ class Trainer:
         self.betas = betas
         self.n_it = n_epochs
 
+        # Checkpointing. ckpt_path=None (the default) is a strict no-op: no
+        # checkpoint I/O happens and callers that do not opt in observe no
+        # behavioural change whatsoever.
+        if ckpt_freq is not None and (
+            isinstance(ckpt_freq, bool)
+            or not isinstance(ckpt_freq, Integral)
+            or ckpt_freq < 1
+        ):
+            raise ValueError("ckpt_freq must be a positive integer or None")
+        self.ckpt_path = ckpt_path
+        self.ckpt_freq = ckpt_freq
+
         return
 
     def _reset_early_stopping(self):
@@ -154,6 +169,86 @@ class Trainer:
             )
         return self.stopped_early
 
+    def save_checkpoint(self, it, loss_dict):
+        """Atomically persist training state to ckpt_path; no-op if unset.
+
+        `it` is the NEXT iteration to run on resume. The optimizer parameter
+        group count is recorded so a checkpoint cannot be silently restored
+        into an incompatible configuration.
+        """
+        if self.ckpt_path is None:
+            return
+        state = {
+            "it": it,
+            "n_epochs": self.n_it,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "param_groups": len(self.optimizer.param_groups),
+            "loss_dict": loss_dict,
+            "early_stopping": {
+                "best_loss": self.best_loss,
+                "patience_count": self.patience_count,
+                "n_epochs_run": self.n_epochs_run,
+                "monitor_history": list(self.monitor_history),
+                "stopped_early": self.stopped_early,
+            },
+        }
+        if self.adaptive_weights is not None:
+            state["adaptive_weights"] = self.adaptive_weights.state_dict()
+        if self.scheduler is not None:
+            state["scheduler"] = self.scheduler.state_dict()
+        os.makedirs(os.path.dirname(self.ckpt_path) or ".", exist_ok=True)
+        tmp = self.ckpt_path + ".tmp"
+        torch.save(state, tmp)
+        os.replace(tmp, self.ckpt_path)  # atomic: never a half-written file
+
+    def load_checkpoint(self):
+        """Restore from ckpt_path if present; returns (start_it, loss_dict|None).
+
+        Must run AFTER the optimizer, adaptive weights and any scheduler reach
+        their final configuration, since their states are restored in place.
+        """
+        if self.ckpt_path is None or not os.path.exists(self.ckpt_path):
+            return 0, None
+        state = torch.load(
+            self.ckpt_path, map_location=self.device, weights_only=False
+        )
+
+        saved_groups = state.get("param_groups")
+        current_groups = len(self.optimizer.param_groups)
+        if saved_groups is not None and saved_groups != current_groups:
+            raise ValueError(
+                "Checkpoint has %d optimizer parameter group(s) but this trainer "
+                "has %d. Adaptive weights occupy a new group without a scheduler "
+                "and group 0 with one, so a checkpoint cannot be resumed under a "
+                "different configuration." % (saved_groups, current_groups)
+            )
+
+        self.model.load_state_dict(state["model"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        if self.adaptive_weights is not None and "adaptive_weights" in state:
+            self.adaptive_weights.load_state_dict(state["adaptive_weights"])
+        if self.scheduler is not None and "scheduler" in state:
+            self.scheduler.load_state_dict(state["scheduler"])
+
+        es = state.get("early_stopping")
+        if es is not None:
+            # Resume is not reuse. A fresh train() resets this state, but a
+            # resumed run must continue the same patience budget, or a requeued
+            # cell would train longer than one that never stopped.
+            self.best_loss = es["best_loss"]
+            self.patience_count = es["patience_count"]
+            self.n_epochs_run = es["n_epochs_run"]
+            self.monitor_history = list(es["monitor_history"])
+            self.stopped_early = es["stopped_early"]
+
+        start_it = int(state["it"])
+        print(
+            "[checkpoint] resumed %s at iteration %d/%s"
+            % (self.ckpt_path, start_it, state.get("n_epochs", self.n_it))
+        )
+        return start_it, state.get("loss_dict")
+
     def shuffle_data(self, *arrays):
         indices = np.random.permutation(arrays[0].shape[0])
 
@@ -176,8 +271,9 @@ class Trainer:
             if it % freq == 0:
                 val_obj.val(self.model)
 
-    def default_loop(self, loss_dict):
-        for it in range(self.n_it):
+    def default_loop(self, loss_dict, start_it=0):
+        self._resume_it = start_it
+        for it in range(start_it, self.n_it):
             start_time = time.time()  # Start timing the iteration
 
             self.model.zero_grad()
@@ -219,14 +315,19 @@ class Trainer:
                     )
                 )
 
+            self._resume_it = it + 1
+            if self.ckpt_freq and it > start_it and it % self.ckpt_freq == 0:
+                self.save_checkpoint(it + 1, loss_dict)
+
             if self._check_early_stopping(total_loss.item()):
                 break
 
         return loss_dict
 
-    def adaptive_loop(self, loss_dict, adaptive_weights):
+    def adaptive_loop(self, loss_dict, adaptive_weights, start_it=0):
 
-        for it in range(self.n_it):
+        self._resume_it = start_it
+        for it in range(start_it, self.n_it):
             start_time = time.time()  # Start timing the iteration
 
             self.model.zero_grad()
@@ -273,6 +374,10 @@ class Trainer:
                         iteration_time,
                     )
                 )
+
+            self._resume_it = it + 1
+            if self.ckpt_freq and it > start_it and it % self.ckpt_freq == 0:
+                self.save_checkpoint(it + 1, loss_dict)
 
             if self._check_early_stopping(monitor_value):
                 break
@@ -326,8 +431,15 @@ class Trainer:
                     lr=self.lr,
                     betas=self.betas,
                 )
+                self.adaptive_weights = adaptive_weights
 
-            loss_dict = self.adaptive_loop(loss_dict, adaptive_weights)
+            start_it, resumed = self.load_checkpoint()
+            if resumed is not None:
+                loss_dict = resumed
+
+            loss_dict = self.adaptive_loop(
+                loss_dict, adaptive_weights, start_it=start_it
+            )
 
         else:
             if not self._external_optimizer:
@@ -337,6 +449,15 @@ class Trainer:
                     betas=self.betas,
                 )
 
-            loss_dict = self.default_loop(loss_dict)
+            start_it, resumed = self.load_checkpoint()
+            if resumed is not None:
+                loss_dict = resumed
+
+            loss_dict = self.default_loop(loss_dict, start_it=start_it)
+
+        # Final save is unconditional (independent of ckpt_freq) so the trained
+        # model is always on disk when train() returns -- both as the resume
+        # target and as the artifact for post-hoc analysis.
+        self.save_checkpoint(getattr(self, "_resume_it", self.n_it), loss_dict)
 
         return self.model, loss_dict
