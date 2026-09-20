@@ -259,6 +259,18 @@ class Trainer:
         if not self.adaptive:
             self.lossesW.append(weigth)
 
+    def add_validator(self, validator_obj, freq=100):
+        if not hasattr(self, 'validators'):
+            self.validators = []
+        self.validators.append((validator_obj, freq))
+
+    def _run_validators(self, it):
+        if not hasattr(self, 'validators'):
+            return
+        for val_obj, freq in self.validators:
+            if it % freq == 0:
+                val_obj.val(self.model)
+
     def default_loop(self, loss_dict, start_it=0):
         self._resume_it = start_it
         for it in range(start_it, self.n_it):
@@ -290,6 +302,8 @@ class Trainer:
             self._step_scheduler(total_loss.item())
 
             iteration_time = time.time() - start_time  # Calculate iteration duration
+
+            self._run_validators(it)
 
             if it % self.print_steps == 0:
                 print(
@@ -345,6 +359,8 @@ class Trainer:
             self._step_scheduler(monitor_value)
 
             iteration_time = time.time() - start_time  # Calculate iteration duration
+
+            self._run_validators(it)
 
             if it % self.print_steps == 0:
                 log_vars = adaptive_weights.log_vars.detach().cpu().numpy()
