@@ -1,0 +1,9 @@
+# Collapse duplicate committer identities.
+# Format: Canonical Name <canonical@email> <commit@email>
+# A bare <email> mapping covers every name ever used with that address.
+
+Yan Barbosa Werneck <yanbwerneck@outlook.com> <yanbwerneck@outlook.com>
+Yan Barbosa Werneck <yanbwerneck@outlook.com> <33363610+ybwerneck@users.noreply.github.com>
+
+Thiago Esterci Fernandes <estercifernandes@gmail.com> <estercifernandes@gmail.com>
+Thiago Esterci Fernandes <estercifernandes@gmail.com> <thiago.esterci.fernandes@gmail.com>
