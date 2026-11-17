@@ -35,6 +35,7 @@ fisiocomPinn/
 ├── Loss.py              # Generic and custom loss functions (MSE, RMSE, LP, etc.)
 ├── Trainer.py           # Training with configurable optimizers and loss weights
 ├── Net.py               # Fully connected networks
+├── Ensemble.py          # M independent models trained as one model
 ├── Loss_PINN.py         # Physics and initial-condition losses
 └── Validator.py         # Validation and result export
 ```
@@ -503,6 +504,105 @@ Run optimizer regression tests in an environment with the package dependencies:
 ```bash
 python -B -m unittest discover -s tests -v
 ```
+
+---
+
+### 5. `Ensemble.py`
+
+Trains M independent copies of one model (different seeds) as a single model:
+`Trainer`, losses and validators written for one model are reused unchanged.
+
+```python
+from fisiocomPinn import EnsembleLoss, EnsembleNet, EnsembleValidator, Trainer
+
+members = []
+for s in range(16):
+    torch.manual_seed(s)
+    members.append(make_model())          # the single model, as always
+
+model = EnsembleNet(members, vectorize=True)
+opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+trainer = Trainer(n_epochs, model, adaptive=False, patience=None, optimizer=opt)
+trainer.add_loss(EnsembleLoss(loss), weigth=1)            # loss: a single-model loss
+trainer.add_validator(EnsembleValidator(validator), freq=100)
+model, loss_dict = trainer.train()
+```
+
+`EnsembleLoss` and `EnsembleValidator` take any object that meets `Trainer`'s
+contract for a single model (`forward(model)` and `name` for a loss, `val(model)`
+for a validator) and meet the same contract for an ensemble, by running the
+single version on every member of whichever `EnsembleNet` they are given; they
+belong to no particular ensemble. The single version is not modified and stays
+reachable as `.single` (for debugging and plotting). Instances are named after
+it: `EnsembleLoss<ECGMismatch>`, `EnsembleValidator<MapValidator>` (a subclass
+`MyLoss(EnsembleLoss)` shows as `MyLoss<ECGMismatch>`).
+
+#### `EnsembleNet(members, vectorize=True)`
+
+| Item | Meaning |
+|------|---------|
+| `members` | Models of one class with the same parameter names and shapes and **equal buffers**. Only parameters may differ; buffers and non-tensor state come from `members[0]` (the template) and are shared |
+| `vectorize` | `True`: all members in one `torch.func.vmap` call. `False`: one member at a time (the reference; needed when the model is not vmap-compatible) |
+| `params` | Stacked parameters, `(M, ...)`; the only entries of `parameters()` and `state_dict()` |
+| `model(*args)` | Every member's output, `(M, ...)` |
+| `model[i]` | Member i, usable wherever the single model is: calling it runs the template's `forward`; properties and methods are evaluated with member i's parameters. Gradients reach member i's slice only |
+| `eval_members(eval_func, *eval_args)` | `eval_func(member, *eval_args)` for every member, stacked on axis 0 |
+| `eval_member(i, eval_func, *eval_args)` | The same for member i |
+| `member_state_dict(i)` | A `state_dict` the single model loads |
+| `model[i].member_index` | i, for code that must keep per-member state |
+
+#### `EnsembleLoss(loss, gather=None)`
+
+`forward(model) = gather(member_losses(model))`. `member_losses` evaluates
+`loss.forward(member)` for every member (vmap or loop) and returns the `(M,)`
+losses, still in the graph; `gather` defaults to the **sum**, or calls the
+`gather` function passed in. Both steps are methods to override in a subclass.
+Attributes: `single`, `name` (copied from `loss`) and `values` (latest `(M,)`
+member losses, detached).
+
+#### `EnsembleValidator(validator, gather=None)`
+
+`val(model) = gather(stack([val_member(model[i]) for i in range(M)]))`.
+`val_member` calls `validator.val(member)`; a validator that should only
+measure per member (no plots or dumps) offers that as its own toggle, e.g. a
+`return_mode=True` constructor flag (see `examples/canonical/custom_validator.py`).
+The M results are stacked on a leading axis when they are tensors, numbers or
+tuples/lists/dicts of them (otherwise kept as a list). `gather` returns them
+unchanged, or calls the `gather` function passed in. Both steps are methods to
+override in a subclass. The same single validator serves every member, so state
+it records in itself must be keyed by `member.member_index`. Attributes:
+`single`, `name`.
+
+```python
+class Stats(EnsembleValidator):              # changes only gather
+    def gather(self, outs):
+        ...                                  # statistics over members -> one dump
+        return outs
+
+v = MeshValidator(..., return_mode=True)     # measure only, per member
+trainer.add_validator(Stats(v), freq=100)
+```
+
+#### Equivalence with independent runs
+
+The summed loss gives every member exactly its single-model gradient, and
+Adam (or any element-wise optimizer) on the stacked tensors is M independent
+optimizers: the ensemble reproduces M separate runs from the same seeds
+(`tests/test_ensemble.py` checks outputs, gradients and Adam trajectories in
+both modes). Anything that mixes members breaks this: `Trainer(adaptive=True)`
+(one weight per loss term learned from the summed loss), global-norm gradient
+clipping, line-search optimizers, and any loss `gather` other than the sum (a
+mean scales each gradient by 1/M; a max or anything nonlinear couples the
+members). The printed total loss is the gathered value (the sum by default).
+
+#### Requirements under `vectorize=True`
+
+The model and the loss run inside `vmap`: no `.item()` or Python `float()` of
+tensors, no data-dependent Python control flow, no random numbers, and custom
+`torch.autograd.Function`s need a vmap rule. A loss's `forward` runs once per
+member in loop mode but once in total under `vmap`, so side effects in it
+(batch counters, stored attributes) differ between the modes. When in doubt,
+compare both modes on two members.
 
 ---
 

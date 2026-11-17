@@ -111,42 +111,47 @@ class WeakResidualValidator(MeshValidator):
         return [(r, r'$K\hat{u}/m - f$', self.cmap, -m, m)]
 
 
-# ------------------------------------------------------------------
-# Train
-# ------------------------------------------------------------------
 X = torch.tensor(verts, dtype=torch.float32, device=DEVICE)   # (N, 2)
-model = FullyConnectedNetwork(2, 1, [WIDTH] * LAYERS)
-
-MATH = (r'$u^*$', r'$\hat{u}$', r'$|\hat{u}-u^*|$')
-val_exact = MeshValidator(u_true, grid=grid, name='vs-exact', freq=VAL_FREQ,
-                          root=RUN, dump_f=DUMP_F, math_labels=MATH,
-                          inputs=X)
-val_res = WeakResidualValidator(grid, f, iidx, name='residual',
-                                freq=VAL_FREQ, root=RUN, dump_f=DUMP_F,
-                                cmap='coolwarm', inputs=X)
-
-trainer = Trainer(n_epochs=N_ITER, model=model, device=str(DEVICE),
-                  adaptive=False, lr=LR, print_steps=1000, patience=None)
-trainer.add_loss(HeatLoss(grid, X, f, iidx, bidx, DEVICE), weigth=1)
-for v in (val_exact, val_res):
-    trainer.add_validator(v, freq=VAL_FREQ)
-model, loss_dict = trainer.train()
 
 
-# ------------------------------------------------------------------
-# Evaluate
-# ------------------------------------------------------------------
-model.eval()
-with torch.no_grad():
-    u_pred = model(X).squeeze(-1).cpu().numpy()
+def main():
+    # --------------------------------------------------------------
+    # Train
+    # --------------------------------------------------------------
+    model = FullyConnectedNetwork(2, 1, [WIDTH] * LAYERS)
 
-err = np.abs(u_pred - u_true)
-print(f'\nvs manufactured:  L2={np.sqrt(np.mean(err ** 2)):.3e}  max={err.max():.3e}')
-print(f'run directory:    {RUN}')
+    MATH = (r'$u^*$', r'$\hat{u}$', r'$|\hat{u}-u^*|$')
+    val_exact = MeshValidator(u_true, grid=grid, name='vs-exact', freq=VAL_FREQ,
+                              root=RUN, dump_f=DUMP_F, math_labels=MATH,
+                              inputs=X)
+    val_res = WeakResidualValidator(grid, f, iidx, name='residual',
+                                    freq=VAL_FREQ, root=RUN, dump_f=DUMP_F,
+                                    cmap='coolwarm', inputs=X)
+
+    trainer = Trainer(n_epochs=N_ITER, model=model, device=str(DEVICE),
+                      adaptive=False, lr=LR, print_steps=1000, patience=None)
+    trainer.add_loss(HeatLoss(grid, X, f, iidx, bidx, DEVICE), weigth=1)
+    for v in (val_exact, val_res):
+        trainer.add_validator(v, freq=VAL_FREQ)
+    model, loss_dict = trainer.train()
+
+    # --------------------------------------------------------------
+    # Evaluate
+    # --------------------------------------------------------------
+    model.eval()
+    with torch.no_grad():
+        u_pred = model(X).squeeze(-1).cpu().numpy()
+
+    err = np.abs(u_pred - u_true)
+    print(f'\nvs manufactured:  L2={np.sqrt(np.mean(err ** 2)):.3e}  max={err.max():.3e}')
+    print(f'run directory:    {RUN}')
+
+    # --------------------------------------------------------------
+    # Loss and validator evolution
+    # --------------------------------------------------------------
+    val_exact.plot_history(os.path.join(RUN, 'loss.png'), others=(val_res,),
+                           extra={'train loss': loss_dict['heat']})
 
 
-# ------------------------------------------------------------------
-# Loss and validator evolution
-# ------------------------------------------------------------------
-val_exact.plot_history(os.path.join(RUN, 'loss.png'), others=(val_res,),
-                       extra={'train loss': loss_dict['heat']})
+if __name__ == '__main__':
+    main()

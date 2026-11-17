@@ -54,11 +54,13 @@ class MeshValidator(Validator):
     freq   : the frequency this validator is registered with; used to label
              iterations, since the Trainer does not pass ``it``.
     dump_f : write arrays and draw every ``dump_f`` checks.
+    return_mode : if True, ``val`` only measures and returns the metrics dict:
+             no history, no files, no plots, no printing.
     """
 
     def __init__(self, u_true=None, grid=None, name='val', freq=1, root='output',
                  dump_f=1, device='cpu', cmap='viridis', math_labels=None,
-                 inputs=None):
+                 inputs=None, return_mode=False):
         n = 1 if u_true is None else len(np.asarray(u_true).ravel())
         target = (torch.zeros(n, 1) if u_true is None else
                   torch.from_numpy(
@@ -76,6 +78,7 @@ class MeshValidator(Validator):
         # nets taking coordinates are called model(inputs), nets carrying
         # their own encoding are called model()
         self.inputs = inputs
+        self.return_mode = return_mode
         self.plot = grid is not None
         self.cmap = cmap
         # Panel titles. Pass mathtext to state the quantity exactly, e.g.
@@ -210,6 +213,8 @@ class MeshValidator(Validator):
             model.train()
 
         row = self.measure(u)
+        if self.return_mode:
+            return row
         it = self.count * self.freq
         self.history.append((it, row))
         self.last_out = u

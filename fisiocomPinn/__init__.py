@@ -8,6 +8,7 @@ por nao ter `device`, e teve o peso de um termo varrido a mao quando
 `AdaptiveLossWeights` existe.
 """
 
+from .Ensemble import EnsembleLoss, EnsembleNet, EnsembleValidator
 from .Grid import Grid, Grid3D, structured_mesh, annular_mesh
 from .GridLoss import GridLoss
 from .Loss import LOSS
@@ -19,6 +20,9 @@ from .Validator import Validator
 
 __all__ = [
     "AdaptiveLossWeights",
+    "EnsembleLoss",
+    "EnsembleNet",
+    "EnsembleValidator",
     "FullyConnectedNetwork",
     "FullyConnectedNetworkMod",
     "Grid",
